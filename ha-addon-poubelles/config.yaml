@@ -1,0 +1,29 @@
+name: "Gestion Poubelles"
+description: "Gestion des rappels de sortie des poubelles jaune et verte avec scan du calendrier annuel, confirmations et notifications."
+version: "1.0.0"
+slug: "gestion_poubelles"
+url: "https://github.com/votre-repo/ha-addon-poubelles"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: "application"
+boot: "auto"
+ingress: true
+ingress_port: 5000
+panel_icon: "mdi:delete-variant"
+panel_title: "Poubelles"
+homeassistant_api: true
+options:
+  reminder_hour: 19
+  reminder_minute: 0
+  notification_service: "notify.notify"
+schema:
+  reminder_hour: int(0,23)
+  reminder_minute: int(0,59)
+  notification_service: str
+map:
+  - share:rw
+  - config:ro

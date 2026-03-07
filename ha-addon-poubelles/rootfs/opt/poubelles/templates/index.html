@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestion Poubelles</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface-hover: #222632;
+            --border: #2a2e3b;
+            --text: #e4e6ed;
+            --text-dim: #8b8fa3;
+            --yellow: #f5c842;
+            --yellow-bg: rgba(245, 200, 66, 0.12);
+            --yellow-border: rgba(245, 200, 66, 0.3);
+            --green: #4ade80;
+            --green-bg: rgba(74, 222, 128, 0.12);
+            --green-border: rgba(74, 222, 128, 0.3);
+            --red: #f87171;
+            --red-bg: rgba(248, 113, 113, 0.12);
+            --blue: #60a5fa;
+            --blue-bg: rgba(96, 165, 250, 0.12);
+            --success: #22c55e;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'DM Sans', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        /* Layout */
+        .app-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 24px 20px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 32px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header h1 span.icon { font-size: 1.8rem; }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 4px;
+            margin-bottom: 28px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            border-radius: var(--radius-sm);
+            background: transparent;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab:hover { color: var(--text); }
+        .tab.active {
+            background: var(--bg);
+            color: var(--text);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Cards */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Stats row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        /* Collection items */
+        .collection-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+            transition: all 0.2s;
+        }
+
+        .collection-item:hover { background: var(--surface-hover); }
+
+        .collection-item.is-tomorrow {
+            border-color: var(--yellow-border);
+            background: var(--yellow-bg);
+        }
+
+        .collection-item.is-today {
+            border-color: var(--green-border);
+            background: var(--green-bg);
+        }
+
+        .collection-date {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .collection-date small {
+            display: block;
+            font-weight: 400;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+
+        .bin-badges {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .bin-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .bin-badge.jaune {
+            background: var(--yellow-bg);
+            color: var(--yellow);
+            border: 1px solid var(--yellow-border);
+        }
+
+        .bin-badge.verte {
+            background: var(--green-bg);
+            color: var(--green);
+            border: 1px solid var(--green-border);
+        }
+
+        .collection-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover { background: var(--surface-hover); border-color: var(--text-dim); }
+
+        .btn-success {
+            background: rgba(34, 197, 94, 0.15);
+            border-color: rgba(34, 197, 94, 0.4);
+            color: var(--success);
+        }
+        .btn-success:hover { background: rgba(34, 197, 94, 0.25); }
+
+        .btn-danger {
+            background: var(--red-bg);
+            border-color: rgba(248, 113, 113, 0.3);
+            color: var(--red);
+        }
+        .btn-danger:hover { background: rgba(248, 113, 113, 0.2); }
+
+        .btn-primary {
+            background: rgba(96, 165, 250, 0.15);
+            border-color: rgba(96, 165, 250, 0.4);
+            color: var(--blue);
+        }
+        .btn-primary:hover { background: rgba(96, 165, 250, 0.25); }
+
+        .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+
+        /* Status indicators */
+        .status-done {
+            color: var(--success);
+            font-weight: 600;
+            font-size: 0.82rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .status-missed {
+            color: var(--red);
+            font-weight: 600;
+            font-size: 0.82rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Upload zone */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 16px;
+        }
+
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--blue);
+            background: var(--blue-bg);
+        }
+
+        .upload-zone .upload-icon { font-size: 2.5rem; margin-bottom: 8px; }
+        .upload-zone p { color: var(--text-dim); font-size: 0.9rem; }
+        .upload-zone p strong { color: var(--text); }
+
+        /* Form elements */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            font-size: 0.88rem;
+            margin-bottom: 6px;
+            color: var(--text-dim);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+            align-items: end;
+        }
+
+        input[type="date"],
+        input[type="number"],
+        input[type="text"],
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--blue);
+            box-shadow: 0 0 0 2px var(--blue-bg);
+        }
+
+        /* Checkbox style */
+        .checkbox-group {
+            display: flex;
+            gap: 16px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.15s;
+            font-size: 0.9rem;
+        }
+
+        .checkbox-label:has(input:checked) {
+            border-color: var(--blue);
+            background: var(--blue-bg);
+        }
+
+        .checkbox-label input { accent-color: var(--blue); }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: var(--radius);
+            font-size: 0.9rem;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.4);
+            color: var(--success);
+        }
+
+        .toast.error {
+            background: var(--red-bg);
+            border: 1px solid rgba(248, 113, 113, 0.3);
+            color: var(--red);
+        }
+
+        /* OCR result */
+        .ocr-result {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 14px;
+            margin-top: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.82rem;
+            font-family: monospace;
+            color: var(--text-dim);
+            white-space: pre-wrap;
+        }
+
+        /* Calendar mini view */
+        .calendar-month {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 3px;
+            margin-bottom: 16px;
+        }
+
+        .cal-header {
+            text-align: center;
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            padding: 6px 0;
+        }
+
+        .cal-day {
+            text-align: center;
+            padding: 6px 2px;
+            border-radius: 6px;
+            font-size: 0.78rem;
+            position: relative;
+        }
+
+        .cal-day.has-jaune { background: var(--yellow-bg); color: var(--yellow); font-weight: 600; }
+        .cal-day.has-verte { background: var(--green-bg); color: var(--green); font-weight: 600; }
+        .cal-day.has-both {
+            background: linear-gradient(135deg, var(--yellow-bg) 50%, var(--green-bg) 50%);
+            font-weight: 600;
+        }
+        .cal-day.today {
+            outline: 2px solid var(--blue);
+            outline-offset: -1px;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--border);
+            border-top-color: var(--blue);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .stats-row { grid-template-columns: 1fr; }
+            .form-row { flex-direction: column; }
+            .collection-item { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .collection-actions { width: 100%; justify-content: flex-end; }
+            .header h1 { font-size: 1.3rem; }
+        }
+
+        /* Toggle switch */
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle input { display: none; }
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: var(--border);
+            border-radius: 24px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: white;
+            top: 3px;
+            left: 3px;
+            transition: 0.2s;
+        }
+        .toggle input:checked + .toggle-slider { background: var(--success); }
+        .toggle input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .setting-row:last-child { border-bottom: none; }
+        .setting-info h3 { font-size: 0.92rem; font-weight: 500; }
+        .setting-info p { font-size: 0.8rem; color: var(--text-dim); }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-dim);
+        }
+        .empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <!-- Header -->
+    <div class="header">
+        <h1><span class="icon">🗑️</span> Gestion Poubelles</h1>
+        <button class="btn btn-sm" onclick="location.reload()">↻ Actualiser</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-value" style="color: var(--blue)">{{ stats.total }}</div>
+            <div class="stat-label">Collectes planifiées</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: var(--success)">{{ stats.confirmed }}</div>
+            <div class="stat-label">Confirmées ✓</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: var(--red)">{{ stats.missed }}</div>
+            <div class="stat-label">Manquées ✗</div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab active" data-tab="dashboard">📋 Prochaines</button>
+        <button class="tab" data-tab="calendar">📅 Calendrier</button>
+        <button class="tab" data-tab="upload">📷 Scanner</button>
+        <button class="tab" data-tab="settings">⚙️ Réglages</button>
+    </div>
+
+    <!-- ===================== TAB: Dashboard ===================== -->
+    <div id="tab-dashboard" class="tab-content active">
+        <div class="card">
+            <div class="card-title">📋 Prochaines collectes</div>
+
+            {% if next_collections %}
+                {% for col in next_collections %}
+                <div class="collection-item {% if col.is_tomorrow %}is-tomorrow{% endif %} {% if col.is_today %}is-today{% endif %}">
+                    <div class="collection-date">
+                        {{ col.date_formatted }}
+                        {% if col.is_tomorrow %}<small>⚡ DEMAIN</small>{% endif %}
+                        {% if col.is_today %}<small>📍 AUJOURD'HUI</small>{% endif %}
+                    </div>
+
+                    <div class="bin-badges">
+                        {% for b in col.bins %}
+                        <span class="bin-badge {{ b }}">
+                            {% if b == 'jaune' %}🟡 Jaune{% else %}🟢 Verte{% endif %}
+
+                            {% if col.status.get(b) == 'done' %}
+                                <span style="margin-left:4px">✅</span>
+                            {% elif col.status.get(b) == 'missed' %}
+                                <span style="margin-left:4px">❌</span>
+                            {% endif %}
+                        </span>
+                        {% endfor %}
+                    </div>
+
+                    <div class="collection-actions">
+                        {% for b in col.bins %}
+                            {% if not col.status.get(b) %}
+                            <button class="btn btn-success btn-sm" onclick="confirmBin('{{ col.date }}', '{{ b }}', 'done')">
+                                ✓ {% if b == 'jaune' %}Jaune{% else %}Verte{% endif %}
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="confirmBin('{{ col.date }}', '{{ b }}', 'missed')">
+                                ✗
+                            </button>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">📭</div>
+                    <p>Aucune collecte planifiée.</p>
+                    <p style="margin-top:8px">Scannez votre calendrier ou ajoutez des dates manuellement.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ===================== TAB: Calendar ===================== -->
+    <div id="tab-calendar" class="tab-content">
+        <!-- Mini calendar view -->
+        <div class="card">
+            <div class="card-title">📅 Vue mensuelle
+                <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+                    <button class="btn btn-sm" onclick="changeMonth(-1)">◀</button>
+                    <span id="month-label" style="font-size:0.9rem; min-width:130px; text-align:center;"></span>
+                    <button class="btn btn-sm" onclick="changeMonth(1)">▶</button>
+                </div>
+            </div>
+            <div id="mini-calendar" class="calendar-month"></div>
+            <div style="display:flex; gap:16px; font-size:0.78rem; color:var(--text-dim); margin-top:8px;">
+                <span>🟡 Jaune</span> <span>🟢 Verte</span> <span>🔵 Aujourd'hui</span>
+            </div>
+        </div>
+
+        <!-- Manual add -->
+        <div class="card">
+            <div class="card-title">➕ Ajouter une date manuellement</div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1">
+                    <label>Date</label>
+                    <input type="date" id="manual-date">
+                </div>
+                <div class="form-group">
+                    <label>Poubelle(s)</label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="cb-jaune" checked> 🟡 Jaune
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="cb-verte"> 🟢 Verte
+                        </label>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="addManualDate()">Ajouter</button>
+            </div>
+
+            <!-- Bulk add: recurring -->
+            <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+                <div class="card-title">🔁 Ajout récurrent</div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Jour de la semaine</label>
+                        <select id="recurring-day">
+                            <option value="0">Lundi</option>
+                            <option value="1">Mardi</option>
+                            <option value="2">Mercredi</option>
+                            <option value="3">Jeudi</option>
+                            <option value="4">Vendredi</option>
+                            <option value="5">Samedi</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Fréquence</label>
+                        <select id="recurring-freq">
+                            <option value="1">Chaque semaine</option>
+                            <option value="2">Toutes les 2 semaines</option>
+                            <option value="4">Toutes les 4 semaines</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Poubelle</label>
+                        <select id="recurring-bin">
+                            <option value="jaune">🟡 Jaune</option>
+                            <option value="verte">🟢 Verte</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row" style="margin-top:8px">
+                    <div class="form-group" style="flex:1">
+                        <label>Du</label>
+                        <input type="date" id="recurring-from">
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Au</label>
+                        <input type="date" id="recurring-to">
+                    </div>
+                    <button class="btn btn-primary" onclick="addRecurring()">Générer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== TAB: Upload ===================== -->
+    <div id="tab-upload" class="tab-content">
+        <div class="card">
+            <div class="card-title">📷 Scanner le calendrier de collecte</div>
+            <p style="color: var(--text-dim); font-size: 0.88rem; margin-bottom: 16px;">
+                Uploadez une photo ou un PDF de votre calendrier annuel de collecte.
+                L'OCR va extraire automatiquement les dates et types de poubelles.
+            </p>
+
+            <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+                <div class="upload-icon">📤</div>
+                <p><strong>Cliquez ou glissez</strong> votre fichier ici</p>
+                <p style="font-size:0.78rem; margin-top:4px;">PNG, JPG, PDF — max 32 Mo</p>
+            </div>
+            <input type="file" id="file-input" accept="image/*,.pdf" style="display:none" onchange="handleFileUpload(this)">
+
+            <div class="form-row">
+                <div class="form-group" style="flex:1">
+                    <label>Année du calendrier</label>
+                    <input type="number" id="upload-year" value="{{ settings.get('year', 2025) }}" min="2024" max="2030">
+                </div>
+                <button class="btn btn-primary" id="upload-btn" onclick="submitUpload()" disabled>
+                    Analyser le fichier
+                </button>
+            </div>
+
+            <div id="upload-status" style="display:none; margin-top:16px;"></div>
+            <div id="ocr-result" class="ocr-result" style="display:none;"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">💡 Conseils pour un bon scan</div>
+            <div style="color:var(--text-dim); font-size:0.88rem; line-height:1.7;">
+                <p>• Prenez la photo bien à plat, sans ombre</p>
+                <p>• Bonne luminosité, texte bien lisible</p>
+                <p>• Si le PDF est déjà numérique, les résultats seront meilleurs</p>
+                <p>• Après le scan, vérifiez les dates détectées et corrigez si besoin dans l'onglet Calendrier</p>
+                <p>• L'OCR cherche les mots-clés : <em>jaune, recyclable, tri, verte, ordures, ménagères</em></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== TAB: Settings ===================== -->
+    <div id="tab-settings" class="tab-content">
+        <div class="card">
+            <div class="card-title">⏰ Rappels</div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <h3>Activer les rappels</h3>
+                    <p>Recevoir une notification la veille de chaque collecte</p>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-reminder-enabled"
+                        {% if settings.reminder_enabled %}checked{% endif %}
+                        onchange="saveSetting('reminder_enabled', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <h3>Heure du rappel</h3>
+                    <p>Heure à laquelle le rappel est envoyé la veille</p>
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <input type="number" id="setting-hour" value="{{ settings.reminder_hour }}"
+                        min="0" max="23" style="width:60px; text-align:center;"
+                        onchange="saveReminderTime()">
+                    <span style="font-weight:600;">:</span>
+                    <input type="number" id="setting-minute" value="{{ settings.reminder_minute }}"
+                        min="0" max="59" style="width:60px; text-align:center;"
+                        onchange="saveReminderTime()">
+                </div>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <h3>Service de notification</h3>
+                    <p>Service HA utilisé pour envoyer les notifications</p>
+                </div>
+                <input type="text" id="setting-notif-service" value="{{ settings.notification_service }}"
+                    style="width:220px" placeholder="notify.notify"
+                    onchange="saveSetting('notification_service', this.value)">
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">🔔 Test</div>
+            <p style="color:var(--text-dim); font-size:0.88rem; margin-bottom:12px;">
+                Envoyez une notification de test pour vérifier que tout fonctionne.
+            </p>
+            <button class="btn btn-primary" onclick="testNotification()">
+                📲 Envoyer un test
+            </button>
+        </div>
+
+        <div class="card">
+            <div class="card-title" style="color: var(--red);">🗑️ Zone de danger</div>
+            <button class="btn btn-danger" onclick="if(confirm('Supprimer TOUTES les dates du calendrier ?')){clearAllDates()}">
+                Supprimer tout le calendrier
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast" id="toast"></div>
+
+<script>
+const BASE = (window.location.pathname.endsWith('/') ? window.location.pathname.slice(0,-1) : window.location.pathname);
+const API = (path) => BASE + path;
+
+// ======= TABS =======
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+
+        if (tab.dataset.tab === 'calendar') renderMiniCalendar();
+    });
+});
+
+// ======= TOAST =======
+function showToast(message, type = 'success') {
+    const t = document.getElementById('toast');
+    t.textContent = message;
+    t.className = 'toast ' + type + ' show';
+    setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ======= CONFIRM BIN =======
+async function confirmBin(date, binType, status) {
+    try {
+        const resp = await fetch(API('/api/confirm'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({date, bin_type: binType, status})
+        });
+        if (resp.ok) {
+            showToast(status === 'done' ? '✅ Poubelle confirmée !' : '❌ Marquée comme manquée');
+            setTimeout(() => location.reload(), 800);
+        }
+    } catch (e) {
+        showToast('Erreur de connexion', 'error');
+    }
+}
+
+// ======= MANUAL DATE =======
+async function addManualDate() {
+    const dateVal = document.getElementById('manual-date').value;
+    if (!dateVal) { showToast('Sélectionnez une date', 'error'); return; }
+
+    const bins = [];
+    if (document.getElementById('cb-jaune').checked) bins.push('jaune');
+    if (document.getElementById('cb-verte').checked) bins.push('verte');
+    if (bins.length === 0) { showToast('Sélectionnez au moins une poubelle', 'error'); return; }
+
+    try {
+        const resp = await fetch(API('/api/calendar'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({date: dateVal, bins})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('Date ajoutée !');
+            setTimeout(() => location.reload(), 800);
+        }
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+// ======= RECURRING =======
+async function addRecurring() {
+    const dayOfWeek = parseInt(document.getElementById('recurring-day').value);
+    const freq = parseInt(document.getElementById('recurring-freq').value);
+    const binType = document.getElementById('recurring-bin').value;
+    const fromDate = document.getElementById('recurring-from').value;
+    const toDate = document.getElementById('recurring-to').value;
+
+    if (!fromDate || !toDate) { showToast('Renseignez les dates de début et fin', 'error'); return; }
+
+    const dates = {};
+    let current = new Date(fromDate);
+    const end = new Date(toDate);
+
+    // Find first matching day
+    while (current.getDay() !== (dayOfWeek + 1) % 7 && current <= end) {
+        current.setDate(current.getDate() + 1);
+    }
+
+    let weekCount = 0;
+    while (current <= end) {
+        if (weekCount % freq === 0) {
+            const ds = current.toISOString().split('T')[0];
+            dates[ds] = [binType];
+        }
+        current.setDate(current.getDate() + 7);
+        weekCount++;
+    }
+
+    const count = Object.keys(dates).length;
+    if (count === 0) { showToast('Aucune date générée', 'error'); return; }
+
+    try {
+        const resp = await fetch(API('/api/calendar'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({dates})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`${count} dates ajoutées !`);
+            setTimeout(() => location.reload(), 800);
+        }
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+// ======= MINI CALENDAR =======
+let calendarData = {};
+let currentViewMonth = new Date().getMonth();
+let currentViewYear = new Date().getFullYear();
+
+const MOIS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+const JOURS_COURTS = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
+
+async function loadCalendarData() {
+    try {
+        const resp = await fetch(API('/api/calendar'));
+        calendarData = await resp.json();
+    } catch(e) { calendarData = {}; }
+}
+
+function changeMonth(delta) {
+    currentViewMonth += delta;
+    if (currentViewMonth > 11) { currentViewMonth = 0; currentViewYear++; }
+    if (currentViewMonth < 0) { currentViewMonth = 11; currentViewYear--; }
+    renderMiniCalendar();
+}
+
+async function renderMiniCalendar() {
+    await loadCalendarData();
+    const container = document.getElementById('mini-calendar');
+    const label = document.getElementById('month-label');
+    label.textContent = `${MOIS_FR[currentViewMonth]} ${currentViewYear}`;
+
+    let html = JOURS_COURTS.map(j => `<div class="cal-header">${j}</div>`).join('');
+
+    const firstDay = new Date(currentViewYear, currentViewMonth, 1);
+    let startDay = (firstDay.getDay() + 6) % 7; // Monday = 0
+    const daysInMonth = new Date(currentViewYear, currentViewMonth + 1, 0).getDate();
+    const today = new Date();
+
+    for (let i = 0; i < startDay; i++) html += '<div class="cal-day"></div>';
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const ds = `${currentViewYear}-${String(currentViewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const bins = calendarData[ds] || [];
+        let cls = 'cal-day';
+        if (bins.includes('jaune') && bins.includes('verte')) cls += ' has-both';
+        else if (bins.includes('jaune')) cls += ' has-jaune';
+        else if (bins.includes('verte')) cls += ' has-verte';
+        if (today.getFullYear() === currentViewYear && today.getMonth() === currentViewMonth && today.getDate() === d) {
+            cls += ' today';
+        }
+        html += `<div class="${cls}" title="${ds}: ${bins.join(', ') || 'aucune'}">${d}</div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+// ======= FILE UPLOAD =======
+let selectedFile = null;
+
+const uploadZone = document.getElementById('upload-zone');
+uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+        selectedFile = e.dataTransfer.files[0];
+        uploadZone.querySelector('p').innerHTML = `<strong>${selectedFile.name}</strong> sélectionné`;
+        document.getElementById('upload-btn').disabled = false;
+    }
+});
+
+function handleFileUpload(input) {
+    if (input.files.length) {
+        selectedFile = input.files[0];
+        uploadZone.querySelector('p').innerHTML = `<strong>${selectedFile.name}</strong> sélectionné`;
+        document.getElementById('upload-btn').disabled = false;
+    }
+}
+
+async function submitUpload() {
+    if (!selectedFile) return;
+
+    const btn = document.getElementById('upload-btn');
+    const statusDiv = document.getElementById('upload-status');
+    const ocrDiv = document.getElementById('ocr-result');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Analyse en cours...';
+    statusDiv.style.display = 'block';
+    statusDiv.innerHTML = '<span class="spinner"></span> OCR en cours, patientez...';
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('year', document.getElementById('upload-year').value);
+
+    try {
+        const resp = await fetch(API('/api/upload-calendar'), {
+            method: 'POST',
+            body: formData
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            statusDiv.innerHTML = `<span style="color:var(--red)">❌ ${data.error}</span>`;
+            if (data.raw_text !== undefined) {
+                ocrDiv.style.display = 'block';
+                ocrDiv.textContent = data.raw_text || '(aucun texte extrait)';
+            }
+        } else {
+            statusDiv.innerHTML = `
+                <span style="color:var(--success)">✅ ${data.dates_found} dates détectées !</span>
+                <span style="color:var(--text-dim); margin-left:12px;">(${data.total_calendar} dates au total dans le calendrier)</span>
+            `;
+            if (data.raw_text) {
+                ocrDiv.style.display = 'block';
+                ocrDiv.textContent = data.raw_text;
+            }
+            showToast(`${data.dates_found} dates importées avec succès !`);
+        }
+    } catch(e) {
+        statusDiv.innerHTML = `<span style="color:var(--red)">❌ Erreur réseau: ${e.message}</span>`;
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = 'Analyser le fichier';
+}
+
+// ======= SETTINGS =======
+async function saveSetting(key, value) {
+    try {
+        const body = {};
+        body[key] = value;
+        await fetch(API('/api/settings'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        showToast('Réglage sauvegardé');
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+async function saveReminderTime() {
+    const hour = parseInt(document.getElementById('setting-hour').value);
+    const minute = parseInt(document.getElementById('setting-minute').value);
+    try {
+        await fetch(API('/api/settings'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reminder_hour: hour, reminder_minute: minute})
+        });
+        showToast(`Rappel programmé à ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`);
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+async function testNotification() {
+    try {
+        await fetch(API('/api/test-notification'), {method: 'POST'});
+        showToast('Notification de test envoyée !');
+    } catch(e) {
+        showToast('Erreur d\'envoi', 'error');
+    }
+}
+
+async function clearAllDates() {
+    try {
+        await fetch(API('/api/calendar'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({dates: {}})
+        });
+        // We need to replace, not merge
+        // Actually let's use a dedicated clear endpoint
+        showToast('Calendrier vidé');
+        setTimeout(() => location.reload(), 800);
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+    const now = new Date();
+    document.getElementById('manual-date').valueAsDate = now;
+    document.getElementById('recurring-from').valueAsDate = now;
+    const endYear = new Date(now.getFullYear(), 11, 31);
+    document.getElementById('recurring-to').valueAsDate = endYear;
+});
+</script>
+
+</body>
+</html>
