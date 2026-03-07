@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#1a1d27"/>
+  <g transform="translate(100, 60)">
+    <!-- Bin body -->
+    <rect x="40" y="100" width="120" height="180" rx="12" fill="#f5c842" opacity="0.9"/>
+    <rect x="50" y="110" width="100" height="30" rx="6" fill="#1a1d27" opacity="0.3"/>
+    <text x="100" y="210" text-anchor="middle" font-size="40" fill="#1a1d27" font-weight="bold">♻</text>
+    <!-- Lid -->
+    <rect x="30" y="80" width="140" height="25" rx="8" fill="#d4a830"/>
+
+    <!-- Second bin -->
+    <rect x="180" y="100" width="120" height="180" rx="12" fill="#4ade80" opacity="0.9"/>
+    <rect x="190" y="110" width="100" height="30" rx="6" fill="#1a1d27" opacity="0.3"/>
+    <text x="240" y="210" text-anchor="middle" font-size="40" fill="#1a1d27" font-weight="bold">🗑</text>
+    <!-- Lid -->
+    <rect x="170" y="80" width="140" height="25" rx="8" fill="#2eb860"/>
+
+    <!-- Bell -->
+    <g transform="translate(160, 310)">
+      <circle cx="0" cy="-5" r="25" fill="#60a5fa" opacity="0.9"/>
+      <text x="0" y="5" text-anchor="middle" font-size="28" fill="white">🔔</text>
+    </g>
+  </g>
+</svg>

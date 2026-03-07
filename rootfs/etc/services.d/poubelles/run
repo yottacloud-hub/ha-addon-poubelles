@@ -1,0 +1,21 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# Start the Poubelles management service
+# ==============================================================================
+
+bashio::log.info "Démarrage de l'addon Gestion Poubelles..."
+
+REMINDER_HOUR=$(bashio::config 'reminder_hour')
+REMINDER_MINUTE=$(bashio::config 'reminder_minute')
+NOTIFICATION_SERVICE=$(bashio::config 'notification_service')
+SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
+INGRESS_ENTRY=$(bashio::addon.ingress_entry)
+
+export REMINDER_HOUR
+export REMINDER_MINUTE
+export NOTIFICATION_SERVICE
+export SUPERVISOR_TOKEN
+export INGRESS_ENTRY
+
+cd /opt/poubelles
+exec python3 app.py
