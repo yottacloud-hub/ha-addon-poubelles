@@ -245,7 +245,8 @@ def classify_cell_color(r, g, b):
     'verte' for gray (ordures ménagères), or None.
     """
     # White or very light = no collection
-    if r > 230 and g > 230 and b > 230:
+    # Use min channel to catch near-white cells (e.g. 235, 240, 238)
+    if min(r, g, b) > 205:
         return None
 
     # Yellow/gold: R and G are high, B is distinctly lower
@@ -255,7 +256,7 @@ def classify_cell_color(r, g, b):
     # Gray (neutral, possibly with slight warm/green tint)
     max_c = max(r, g, b)
     min_c = min(r, g, b)
-    if max_c - min_c < 55 and 110 < max_c < 235:
+    if max_c - min_c < 55 and 110 < max_c < 205:
         return "verte"
 
     return None
@@ -560,45 +561,11 @@ def send_reminder_for_tomorrow():
             bin_list = "\n".join(bin_names)
             message = f"Demain c'est jour de collecte !\n\n{bin_list}\n\nPensez à sortir vos poubelles ce soir."
 
-            # Send notification with actionable buttons
             send_notification(
                 title="🗑️ Rappel Poubelles",
                 message=message,
-                data={
-                    "actions": [
-                        {
-                            "action": "BINS_DONE",
-                            "title": "✅ C'est fait !",
-                        },
-                        {
-                            "action": "BINS_SNOOZE",
-                            "title": "⏰ Rappeler dans 1h",
-                        },
-                    ],
-                    "tag": f"poubelles_{tomorrow}",
-                    "persistent": True,
-                },
             )
             logger.info(f"Reminder sent for {tomorrow}: {bins}")
-
-
-def send_snooze_reminder():
-    """Send a follow-up reminder after snooze."""
-    tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
-    calendar = get_calendar()
-    if tomorrow in calendar:
-        send_notification(
-            title="🗑️ Rappel Poubelles (relance)",
-            message="N'oubliez pas de sortir vos poubelles !",
-            data={
-                "actions": [
-                    {"action": "BINS_DONE", "title": "✅ C'est fait !"},
-                    {"action": "BINS_LATER", "title": "⏰ Plus tard"},
-                ],
-                "tag": f"poubelles_{tomorrow}",
-                "persistent": True,
-            },
-        )
 
 
 # ---------------------------------------------------------------------------

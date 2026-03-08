@@ -583,6 +583,7 @@
                             </button>
                             {% endif %}
                         {% endfor %}
+                        <button class="btn btn-sm" onclick="deleteDate('{{ col.date }}')" title="Supprimer cette date" style="color:var(--text-dim)">🗑️</button>
                     </div>
                 </div>
                 {% endfor %}
@@ -608,8 +609,13 @@
                 </div>
             </div>
             <div id="mini-calendar" class="calendar-month"></div>
-            <div style="display:flex; gap:16px; font-size:0.78rem; color:var(--text-dim); margin-top:8px;">
-                <span>🟡 Jaune</span> <span>🟢 Verte</span> <span>🔵 Aujourd'hui</span>
+            <div style="display:flex; gap:16px; font-size:0.78rem; color:var(--text-dim); margin-top:8px; justify-content:space-between; align-items:center;">
+                <div style="display:flex; gap:16px;">
+                    <span>🟡 Jaune</span> <span>🟢 Verte</span> <span>🔵 Aujourd'hui</span>
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="if(confirm('Supprimer TOUTES les dates du calendrier et l\'historique ?')){clearAllDates()}">
+                    🗑️ Tout réinitialiser
+                </button>
             </div>
         </div>
 
@@ -717,8 +723,8 @@
                 <p>• Prenez la photo bien à plat, sans ombre</p>
                 <p>• Bonne luminosité, texte bien lisible</p>
                 <p>• Si le PDF est déjà numérique, les résultats seront meilleurs</p>
-                <p>• Après le scan, vérifiez les dates détectées et corrigez si besoin dans l'onglet Calendrier</p>
-                <p>• L'OCR cherche les mots-clés : <em>jaune, recyclable, tri, verte, ordures, ménagères</em></p>
+                <p>• La détection utilise les <strong>couleurs des cellules</strong> (gris = ordures, jaune = recyclables)</p>
+                <p>• Après le scan, vérifiez les dates et supprimez les erreurs dans l'onglet Calendrier</p>
             </div>
         </div>
     </div>
@@ -952,7 +958,11 @@ async function renderMiniCalendar() {
         if (today.getFullYear() === currentViewYear && today.getMonth() === currentViewMonth && today.getDate() === d) {
             cls += ' today';
         }
-        html += `<div class="${cls}" title="${ds}: ${bins.join(', ') || 'aucune'}">${d}</div>`;
+        if (bins.length > 0) {
+            html += `<div class="${cls}" title="${ds}: ${bins.join(', ')} — clic pour supprimer" style="cursor:pointer" onclick="deleteDate('${ds}')">${d}</div>`;
+        } else {
+            html += `<div class="${cls}" title="${ds}: aucune">${d}</div>`;
+        }
     }
 
     container.innerHTML = html;
@@ -1078,6 +1088,24 @@ async function clearAllDates() {
         });
         showToast('Calendrier vidé');
         setTimeout(() => location.reload(), 800);
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+async function deleteDate(dateStr) {
+    if (!confirm(`Supprimer la collecte du ${dateStr} ?`)) return;
+    try {
+        const resp = await fetch(API('/api/calendar/delete'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({date: dateStr})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast('Date supprimée');
+            setTimeout(() => location.reload(), 800);
+        }
     } catch(e) {
         showToast('Erreur', 'error');
     }
