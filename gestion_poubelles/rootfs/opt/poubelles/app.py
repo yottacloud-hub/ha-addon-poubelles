@@ -5,9 +5,11 @@ Gère les rappels de sortie des poubelles jaune et verte.
 """
 
 import os
+import sys
 import json
 import re
 import logging
+import calendar as cal_module
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from dateutil import parser as dateparser
@@ -233,25 +235,286 @@ def parse_calendar_text(raw_text: str, year: int = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Color-based calendar parsing (grid-style calendars like Toulouse Métropole)
+# ---------------------------------------------------------------------------
+
+def classify_cell_color(r, g, b):
+    """Classify a cell background color as a bin type.
+
+    Returns 'jaune' for yellow/gold (recyclables),
+    'verte' for gray (ordures ménagères), or None.
+    """
+    # White or very light = no collection
+    if r > 230 and g > 230 and b > 230:
+        return None
+
+    # Yellow/gold: R and G are high, B is distinctly lower
+    if r > 170 and g > 140 and b < 160 and (r - b) > 35:
+        return "jaune"
+
+    # Gray (neutral, possibly with slight warm/green tint)
+    max_c = max(r, g, b)
+    min_c = min(r, g, b)
+    if max_c - min_c < 55 and 110 < max_c < 235:
+        return "verte"
+
+    return None
+
+
+def parse_calendar_by_color(filepath, year=None):
+    """Parse a grid-style waste calendar by detecting cell background colors.
+
+    Works with calendars where:
+    - Columns represent months
+    - Rows represent days (1-31)
+    - Gray background = ordures ménagères (verte)
+    - Yellow/gold background = emballages recyclables (jaune)
+    """
+    if not HAS_OCR:
+        logger.warning("Color parser: OCR not available")
+        return {}
+
+    try:
+        # Load image
+        if filepath.lower().endswith('.pdf'):
+            if not HAS_PDF:
+                return {}
+            pages = convert_from_path(filepath, dpi=200)
+            img = pages[0]
+        else:
+            img = Image.open(filepath)
+
+        img_rgb = img.convert('RGB')
+        w, h = img_rgb.size
+        logger.info(f"Color parser: image size {w}x{h}")
+
+        # Run OCR with bounding boxes
+        ocr = pytesseract.image_to_data(
+            img, lang='fra', output_type=pytesseract.Output.DICT
+        )
+        n = len(ocr['text'])
+
+        # --- Find year ---
+        if year is None:
+            year = datetime.now().year
+            for i in range(n):
+                t = ocr['text'][i].strip()
+                if len(t) == 4 and t.isdigit():
+                    v = int(t)
+                    if 2024 <= v <= 2040:
+                        year = v
+                        break
+        logger.info(f"Color parser: year={year}")
+
+        # --- Find month headers ---
+        MONTH_LOOKUP = {
+            'JANVIER': 1, 'FEVRIER': 2, 'MARS': 3,
+            'AVRIL': 4, 'MAI': 5, 'JUIN': 6, 'JUILLET': 7,
+            'AOUT': 8, 'SEPTEMBRE': 9, 'OCTOBRE': 10,
+            'NOVEMBRE': 11, 'DECEMBRE': 12,
+        }
+
+        def normalize_upper(s):
+            return (s.upper()
+                    .replace('É', 'E').replace('È', 'E')
+                    .replace('Û', 'U').replace('Ô', 'O')
+                    .replace('Ê', 'E').replace('Â', 'A'))
+
+        month_headers = []  # (month_num, center_x, bottom_y)
+        for i in range(n):
+            txt = normalize_upper(ocr['text'][i].strip())
+            if txt in MONTH_LOOKUP and ocr['width'][i] > 15:
+                m = MONTH_LOOKUP[txt]
+                cx = ocr['left'][i] + ocr['width'][i] // 2
+                by = ocr['top'][i] + ocr['height'][i]
+                month_headers.append((m, cx, by))
+
+        if not month_headers:
+            logger.info("Color parser: no month headers found")
+            return {}
+
+        month_headers.sort(key=lambda x: x[1])
+        logger.info(f"Color parser: found months {[m for m, _, _ in month_headers]}")
+
+        # --- Column boundaries ---
+        cols = []
+        for idx, (m, cx, by) in enumerate(month_headers):
+            if idx == 0:
+                gap = (month_headers[1][1] - cx) if len(month_headers) > 1 else cx
+                xl = max(0, cx - gap // 2)
+            else:
+                xl = (month_headers[idx - 1][1] + cx) // 2
+
+            if idx == len(month_headers) - 1:
+                gap = (cx - month_headers[idx - 1][1]) if idx > 0 else (w - cx)
+                xr = min(w, cx + gap // 2)
+            else:
+                xr = (cx + month_headers[idx + 1][1]) // 2
+
+            cols.append((m, xl, xr))
+
+        # --- Find day numbers to determine row grid ---
+        header_bottom = max(by for _, _, by in month_headers) + 5
+
+        day_positions = []  # (day_num, x, y_center)
+        for i in range(n):
+            txt = ocr['text'][i].strip()
+            if not txt.isdigit():
+                continue
+            d = int(txt)
+            if d < 1 or d > 31:
+                continue
+            y_top = ocr['top'][i]
+            if y_top < header_bottom:
+                continue
+            yc = y_top + ocr['height'][i] // 2
+            x = ocr['left'][i]
+            day_positions.append((d, x, yc))
+
+        if not day_positions:
+            logger.info("Color parser: no day numbers found below headers")
+            return {}
+
+        # Assign days to columns
+        col_days = {m: [] for m, _, _ in cols}
+        for d, x, yc in day_positions:
+            for m, xl, xr in cols:
+                if xl - 20 <= x <= xr + 20:
+                    col_days[m].append((d, yc))
+                    break
+
+        # Find column with most days for row height calculation
+        best_col = max(col_days, key=lambda m: len(col_days[m]))
+        if not col_days[best_col]:
+            return {}
+
+        # Deduplicate and sort
+        seen = set()
+        unique = []
+        for d, y in sorted(col_days[best_col], key=lambda x: x[1]):
+            if d not in seen:
+                seen.add(d)
+                unique.append((d, y))
+        unique.sort(key=lambda x: x[0])
+
+        if len(unique) < 2:
+            logger.info("Color parser: not enough day positions")
+            return {}
+
+        # Calculate average row height
+        heights = []
+        for j in range(1, len(unique)):
+            d1, y1 = unique[j - 1]
+            d2, y2 = unique[j]
+            if d2 > d1 and y2 > y1:
+                rh = (y2 - y1) / (d2 - d1)
+                if rh > 3:
+                    heights.append(rh)
+
+        if not heights:
+            logger.info("Color parser: could not compute row height")
+            return {}
+
+        row_h = sum(heights) / len(heights)
+
+        # Find day-1 Y position
+        day1_y = None
+        for d, y in unique:
+            if d == 1:
+                day1_y = y
+                break
+        if day1_y is None:
+            d0, y0 = unique[0]
+            day1_y = y0 - (d0 - 1) * row_h
+
+        logger.info(f"Color parser: row_height={row_h:.1f}, day1_y={day1_y:.1f}")
+
+        # --- Sample colors for each cell ---
+        result = {}
+
+        for month, xl, xr in cols:
+            col_cx = (xl + xr) // 2
+            max_day = cal_module.monthrange(year, month)[1]
+
+            for day in range(1, max_day + 1):
+                cell_y = int(day1_y + (day - 1) * row_h)
+
+                # Sample background pixels across the cell
+                samples = []
+                sx_range = int((xr - xl) * 0.25)
+                sy_range = max(2, int(row_h * 0.25))
+
+                step_x = max(1, sx_range // 5)
+                step_y = max(1, sy_range // 3)
+
+                for dx in range(-sx_range, sx_range + 1, step_x):
+                    for dy in range(-sy_range, sy_range + 1, step_y):
+                        sx = max(0, min(col_cx + dx, w - 1))
+                        sy = max(0, min(cell_y + dy, h - 1))
+                        px = img_rgb.getpixel((sx, sy))
+                        # Skip very dark pixels (text, grid lines)
+                        if max(px) > 100:
+                            samples.append(px)
+
+                if len(samples) < 3:
+                    continue
+
+                # Take brighter half of samples (background, not text)
+                samples.sort(key=lambda p: sum(p), reverse=True)
+                bg = samples[:max(3, len(samples) // 2)]
+
+                avg_r = sum(p[0] for p in bg) / len(bg)
+                avg_g = sum(p[1] for p in bg) / len(bg)
+                avg_b = sum(p[2] for p in bg) / len(bg)
+
+                bt = classify_cell_color(avg_r, avg_g, avg_b)
+                if bt:
+                    try:
+                        ds = date(year, month, day).isoformat()
+                        result[ds] = [bt]
+                    except ValueError:
+                        pass
+
+        logger.info(f"Color parser: found {len(result)} collection dates")
+        return result
+
+    except Exception as e:
+        logger.error(f"Color parser error: {e}", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Home Assistant API helpers
 # ---------------------------------------------------------------------------
 
 def ha_api(method: str, endpoint: str, data: dict = None):
     """Call the Home Assistant Supervisor API."""
     if not SUPERVISOR_TOKEN:
-        logger.warning("No SUPERVISOR_TOKEN, cannot call HA API")
+        logger.warning("No SUPERVISOR_TOKEN set - cannot call HA API. "
+                       "Check that homeassistant_api: true is in config.yaml")
         return None
     url = f"http://supervisor/core/api/{endpoint}"
     headers = {
         "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
         "Content-Type": "application/json",
     }
+    logger.info(f"HA API call: {method} {url}")
     try:
         resp = requests.request(method, url, json=data, headers=headers, timeout=10)
+        logger.info(f"HA API response: {resp.status_code} {resp.text[:200] if resp.text else '(empty)'}")
         resp.raise_for_status()
-        return resp.json() if resp.text else {}
+        try:
+            return resp.json() if resp.text else {}
+        except ValueError:
+            return {"raw": resp.text}
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"HA API connection error (is Supervisor reachable?): {e}")
+        return None
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HA API HTTP error: {e} - Response: {resp.text[:500] if resp.text else '(empty)'}")
+        return None
     except Exception as e:
-        logger.error(f"HA API error: {e}")
+        logger.error(f"HA API unexpected error: {e}", exc_info=True)
         return None
 
 
@@ -445,21 +708,37 @@ def upload_calendar():
     filepath = str(UPLOAD_DIR / filename)
     file.save(filepath)
 
-    # Extract text
-    if ext == "pdf":
-        raw_text = extract_text_from_pdf(filepath)
-    else:
-        raw_text = extract_text_from_image(filepath)
-
-    if not raw_text.strip():
-        return jsonify({
-            "error": "Impossible d'extraire le texte. Essayez avec une image plus nette ou saisissez les dates manuellement.",
-            "raw_text": "",
-        }), 422
-
-    # Parse dates
     year = request.form.get("year", datetime.now().year, type=int)
-    parsed = parse_calendar_text(raw_text, year)
+
+    # Try color-based grid detection first (works with Toulouse Métropole style)
+    logger.info(f"Attempting color-based calendar parsing for {filepath}")
+    parsed = parse_calendar_by_color(filepath, year)
+    raw_text = ""
+
+    if parsed:
+        raw_text = f"Détection par couleur : {len(parsed)} dates de collecte trouvées."
+        logger.info(f"Color parser succeeded: {len(parsed)} dates")
+    else:
+        # Fall back to text-based OCR parsing
+        logger.info("Color parser found nothing, falling back to text OCR")
+        if ext == "pdf":
+            raw_text = extract_text_from_pdf(filepath)
+        else:
+            raw_text = extract_text_from_image(filepath)
+
+        if not raw_text.strip():
+            return jsonify({
+                "error": "Impossible d'extraire le texte ou les couleurs. Essayez avec une image plus nette ou saisissez les dates manuellement.",
+                "raw_text": "",
+            }), 422
+
+        parsed = parse_calendar_text(raw_text, year)
+
+    if not parsed:
+        return jsonify({
+            "error": "Aucune date de collecte détectée. Essayez de saisir les dates manuellement.",
+            "raw_text": raw_text,
+        }), 422
 
     # Merge with existing calendar
     existing = get_calendar()
@@ -617,6 +896,17 @@ def format_date_fr(date_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Log startup info for debugging
+    logger.info("=" * 50)
+    logger.info("Gestion Poubelles - Démarrage")
+    logger.info(f"  SUPERVISOR_TOKEN: {'set (' + str(len(SUPERVISOR_TOKEN)) + ' chars)' if SUPERVISOR_TOKEN else 'NOT SET'}")
+    logger.info(f"  NOTIFICATION_SERVICE: {NOTIFICATION_SERVICE}")
+    logger.info(f"  REMINDER: {REMINDER_HOUR:02d}:{REMINDER_MINUTE:02d}")
+    logger.info(f"  INGRESS_ENTRY: {INGRESS_ENTRY}")
+    logger.info(f"  HAS_OCR: {HAS_OCR}, HAS_PDF: {HAS_PDF}")
+    logger.info(f"  DATA_DIR: {DATA_DIR}")
+    logger.info("=" * 50)
+
     setup_scheduler()
     port = int(os.environ.get("INGRESS_PORT", "8099"))
     logger.info(f"Starting Gestion Poubelles on port {port}")
