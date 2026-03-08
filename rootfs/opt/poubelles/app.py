@@ -423,6 +423,7 @@ def index():
         },
         ingress_entry=INGRESS_ENTRY,
         has_ocr=HAS_OCR,
+        now_year=datetime.now().year,
     )
 
 
@@ -492,13 +493,22 @@ def api_set_calendar():
     if "dates" in data:
         # Batch update: {"dates": {"2025-03-15": ["jaune"], ...}}
         for d, bins in data["dates"].items():
-            calendar[d] = bins
+            if bins:  # Only add non-empty entries
+                calendar[d] = bins
     elif "date" in data and "bins" in data:
         # Single update
         calendar[data["date"]] = data["bins"]
 
     save_calendar(calendar)
     return jsonify({"success": True, "total": len(calendar)})
+
+
+@app.route("/api/calendar/clear", methods=["POST"])
+def api_clear_calendar():
+    """Clear all dates from the calendar."""
+    save_calendar({})
+    save_history({})
+    return jsonify({"success": True})
 
 
 @app.route("/api/calendar/delete", methods=["POST"])
@@ -608,5 +618,6 @@ def format_date_fr(date_str: str) -> str:
 
 if __name__ == "__main__":
     setup_scheduler()
-    port = int(os.environ.get("INGRESS_PORT", 5000))
+    port = int(os.environ.get("INGRESS_PORT", "8099"))
+    logger.info(f"Starting Gestion Poubelles on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
