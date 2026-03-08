@@ -519,24 +519,54 @@ def ha_api(method: str, endpoint: str, data: dict = None):
         return None
 
 
+def get_notify_services():
+    """Fetch available notification services from Home Assistant."""
+    result = ha_api("GET", "services")
+    services = []
+    if result and isinstance(result, list):
+        for domain_info in result:
+            if domain_info.get("domain") == "notify":
+                for svc_name in domain_info.get("services", {}):
+                    full_name = f"notify.{svc_name}"
+                    services.append(full_name)
+    # Sort: mobile_app services first, then others
+    services.sort(key=lambda s: (0 if "mobile_app" in s else 1, s))
+    return services
+
+
 def send_notification(title: str, message: str, data: dict = None):
-    """Send a notification via Home Assistant."""
+    """Send a notification to all configured devices via Home Assistant."""
     settings = get_settings()
-    service = settings.get("notification_service", NOTIFICATION_SERVICE)
-    # service format: notify.notify -> services/notify/notify
-    parts = service.split(".")
-    if len(parts) == 2:
-        endpoint = f"services/{parts[0]}/{parts[1]}"
-    else:
-        endpoint = f"services/notify/notify"
+    devices = settings.get("notification_devices", [])
+
+    # Backward compat: fall back to single service if no devices configured
+    if not devices:
+        old_service = settings.get("notification_service", NOTIFICATION_SERVICE)
+        if old_service:
+            devices = [old_service]
+
+    if not devices:
+        logger.warning("No notification devices configured")
+        return None
 
     payload = {"title": title, "message": message}
     if data:
         payload["data"] = data
 
-    result = ha_api("POST", endpoint, payload)
-    logger.info(f"Notification sent: {title} -> {result}")
-    return result
+    results = []
+    for service in devices:
+        parts = service.split(".")
+        if len(parts) == 2:
+            endpoint = f"services/{parts[0]}/{parts[1]}"
+        else:
+            endpoint = f"services/notify/{service}"
+
+        logger.info(f"Sending notification to {service}: {title}")
+        result = ha_api("POST", endpoint, payload)
+        results.append({"service": service, "result": result})
+
+    logger.info(f"Notification results: {results}")
+    return results
 
 
 def send_reminder_for_tomorrow():
@@ -809,11 +839,40 @@ def api_save_settings():
 @app.route("/api/test-notification", methods=["POST"])
 def api_test_notification():
     """Send a test notification."""
-    send_notification(
+    results = send_notification(
         title="🗑️ Test - Poubelles",
         message="Ceci est un test du système de rappel poubelles !",
     )
-    return jsonify({"success": True})
+    if results:
+        errors = [r for r in results if r.get("result") is None]
+        if errors:
+            return jsonify({
+                "success": False,
+                "error": f"{len(errors)}/{len(results)} envois échoués. Vérifiez les logs.",
+                "results": results,
+            }), 500
+    return jsonify({"success": True, "results": results})
+
+
+@app.route("/api/notify-services", methods=["GET"])
+def api_notify_services():
+    """List available HA notification services (for device selection)."""
+    services = get_notify_services()
+    settings = get_settings()
+    selected = settings.get("notification_devices", [])
+    return jsonify({"services": services, "selected": selected})
+
+
+@app.route("/api/notification-devices", methods=["POST"])
+def api_set_notification_devices():
+    """Save selected notification devices."""
+    data = request.get_json()
+    devices = data.get("devices", [])
+    settings = get_settings()
+    settings["notification_devices"] = devices
+    save_settings(settings)
+    logger.info(f"Notification devices updated: {devices}")
+    return jsonify({"success": True, "devices": devices})
 
 
 @app.route("/api/history", methods=["GET"])
