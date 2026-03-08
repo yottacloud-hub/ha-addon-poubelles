@@ -1,6 +1,6 @@
 name: "Gestion Poubelles"
 description: "Gestion des rappels de sortie des poubelles jaune et verte avec scan du calendrier annuel, confirmations et notifications."
-version: "1.0.2"
+version: "1.0.3"
 slug: "gestion_poubelles"
 url: "https://github.com/yottacloud-hub/ha-addon-poubelles"
 arch:
@@ -11,6 +11,7 @@ arch:
   - i386
 startup: "application"
 boot: "auto"
+init: false
 ingress: true
 ingress_port: 0
 panel_icon: "mdi:delete-variant"
