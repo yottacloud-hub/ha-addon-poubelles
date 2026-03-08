@@ -12,36 +12,19 @@ Gère les rappels de sortie des poubelles jaune et verte avec scan OCR du calend
 
 ## Installation
 
-### Méthode 1 : Dépôt local
+### Dépôt Add-on Home Assistant (recommandé)
 
-1. Copiez le dossier `ha-addon-poubelles` dans le répertoire `/addons/` de votre installation Home Assistant :
-   ```
-   /addons/ha-addon-poubelles/
-   ├── config.yaml
-   ├── Dockerfile
-   ├── icon.svg
-   ├── README.md
-   └── rootfs/
-       ├── etc/services.d/poubelles/run
-       └── opt/poubelles/
-           ├── app.py
-           ├── templates/index.html
-           └── static/
-   ```
+1. Dans Home Assistant : **Paramètres → Modules complémentaires → Boutique des modules complémentaires**
+2. Cliquez sur **⋮** (menu 3 points) en haut à droite → **Dépôts**
+3. Ajoutez l'URL : `https://github.com/yottacloud-hub/ha-addon-poubelles`
+4. Cliquez **Ajouter** puis fermez
+5. Recherchez "Gestion Poubelles" dans la boutique et cliquez **Installer**
 
-2. Dans Home Assistant, allez dans **Paramètres → Modules complémentaires → Boutique des modules complémentaires**
+### Méthode locale
 
-3. Cliquez sur **⋮** (menu 3 points) en haut à droite → **Vérifier les mises à jour**
-
-4. L'add-on "Gestion Poubelles" apparaît dans la section **Dépôts locaux**
-
-5. Cliquez dessus puis **Installer**
-
-### Méthode 2 : Dépôt GitHub
-
-1. Poussez ce dossier dans un dépôt GitHub
-2. Dans HA : **Paramètres → Modules complémentaires → Boutique → ⋮ → Dépôts → Ajouter** l'URL du dépôt
-3. Installez l'add-on
+1. Copiez le dossier `gestion_poubelles/` dans le répertoire `/addons/` de votre installation Home Assistant
+2. Dans HA : **Paramètres → Modules complémentaires → Boutique → ⋮ → Vérifier les mises à jour**
+3. L'add-on apparaît dans la section **Dépôts locaux**
 
 ## Configuration
 
