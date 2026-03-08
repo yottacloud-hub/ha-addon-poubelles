@@ -509,6 +509,30 @@
             color: var(--text-dim);
         }
         .empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; }
+
+        /* Admin mode */
+        .admin-only { display: none !important; }
+        body.admin-mode .admin-only { display: revert !important; }
+        body.admin-mode .admin-only.setting-row { display: flex !important; }
+        body.admin-mode .admin-only.form-row { display: flex !important; }
+
+        .admin-toggle {
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: transparent;
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+        .admin-toggle:hover { border-color: var(--text-dim); color: var(--text); }
+        body.admin-mode .admin-toggle {
+            border-color: var(--yellow-border);
+            background: var(--yellow-bg);
+            color: var(--yellow);
+        }
     </style>
 </head>
 <body>
@@ -517,7 +541,10 @@
     <!-- Header -->
     <div class="header">
         <h1><span class="icon">🗑️</span> Gestion Poubelles</h1>
-        <button class="btn btn-sm" onclick="location.reload()">↻ Actualiser</button>
+        <div style="display:flex; gap:6px; align-items:center;">
+            <button class="admin-toggle" id="admin-toggle-btn" onclick="toggleAdminMode()" title="Activer/désactiver le mode administration">🔒 Admin</button>
+            <button class="btn btn-sm" onclick="location.reload()">↻ Actualiser</button>
+        </div>
     </div>
 
     <!-- Stats -->
@@ -540,8 +567,8 @@
     <div class="tabs">
         <button class="tab active" data-tab="dashboard">📋 Prochaines</button>
         <button class="tab" data-tab="calendar">📅 Calendrier</button>
-        <button class="tab" data-tab="upload">📷 Scanner</button>
-        <button class="tab" data-tab="settings">⚙️ Réglages</button>
+        <button class="tab admin-only" data-tab="upload">📷 Scanner</button>
+        <button class="tab admin-only" data-tab="settings">⚙️ Réglages</button>
     </div>
 
     <!-- ===================== TAB: Dashboard ===================== -->
@@ -583,7 +610,7 @@
                             </button>
                             {% endif %}
                         {% endfor %}
-                        <button class="btn btn-sm" onclick="deleteDate('{{ col.date }}')" title="Supprimer cette date" style="color:var(--text-dim)">🗑️</button>
+                        <button class="btn btn-sm admin-only" onclick="deleteDate('{{ col.date }}')" title="Supprimer cette date" style="color:var(--text-dim)">🗑️</button>
                     </div>
                 </div>
                 {% endfor %}
@@ -613,14 +640,14 @@
                 <div style="display:flex; gap:16px;">
                     <span>🟡 Jaune</span> <span>🟢 Verte</span> <span>🔵 Aujourd'hui</span>
                 </div>
-                <button class="btn btn-danger btn-sm" onclick="if(confirm('Supprimer TOUTES les dates du calendrier et l\'historique ?')){clearAllDates()}">
+                <button class="btn btn-danger btn-sm admin-only" onclick="if(confirm('Supprimer TOUTES les dates du calendrier et l\'historique ?')){clearAllDates()}">
                     🗑️ Tout réinitialiser
                 </button>
             </div>
         </div>
 
-        <!-- Manual add -->
-        <div class="card">
+        <!-- Manual add (admin only) -->
+        <div class="card admin-only">
             <div class="card-title">➕ Ajouter une date manuellement</div>
             <div class="form-row">
                 <div class="form-group" style="flex:1">
@@ -988,7 +1015,11 @@ async function renderMiniCalendar() {
             cls += ' today';
         }
         if (bins.length > 0) {
-            html += `<div class="${cls}" title="${ds}: ${bins.join(', ')} — clic pour supprimer" style="cursor:pointer" onclick="deleteDate('${ds}')">${d}</div>`;
+            if (document.body.classList.contains('admin-mode')) {
+                html += `<div class="${cls}" title="${ds}: ${bins.join(', ')} — clic pour supprimer" style="cursor:pointer" onclick="deleteDate('${ds}')">${d}</div>`;
+            } else {
+                html += `<div class="${cls}" title="${ds}: ${bins.join(', ')}">${d}</div>`;
+            }
         } else {
             html += `<div class="${cls}" title="${ds}: aucune">${d}</div>`;
         }
@@ -1209,6 +1240,36 @@ async function deleteDate(dateStr) {
         showToast('Erreur', 'error');
     }
 }
+
+// ======= ADMIN MODE =======
+function toggleAdminMode() {
+    const isAdmin = document.body.classList.toggle('admin-mode');
+    localStorage.setItem('poubelles_admin', isAdmin ? '1' : '0');
+    updateAdminButton();
+    // Re-render calendar to update click behavior
+    if (document.getElementById('tab-calendar').classList.contains('active')) {
+        renderMiniCalendar();
+    }
+    // If switching out of admin mode and on an admin-only tab, go to dashboard
+    const activeTab = document.querySelector('.tab.active');
+    if (!isAdmin && activeTab && activeTab.classList.contains('admin-only')) {
+        document.querySelector('.tab[data-tab="dashboard"]').click();
+    }
+}
+
+function updateAdminButton() {
+    const btn = document.getElementById('admin-toggle-btn');
+    const isAdmin = document.body.classList.contains('admin-mode');
+    btn.textContent = isAdmin ? '🔓 Admin' : '🔒 Admin';
+}
+
+// Restore admin mode from localStorage
+(function() {
+    if (localStorage.getItem('poubelles_admin') === '1') {
+        document.body.classList.add('admin-mode');
+    }
+    updateAdminButton();
+})();
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
