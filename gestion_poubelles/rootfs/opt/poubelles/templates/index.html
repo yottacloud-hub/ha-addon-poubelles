@@ -526,13 +526,30 @@
             cursor: pointer;
             transition: all 0.15s;
             font-family: inherit;
+            display: none; /* Hidden until HA admin detected */
         }
+        .admin-toggle.visible { display: inline-flex; }
         .admin-toggle:hover { border-color: var(--text-dim); color: var(--text); }
         body.admin-mode .admin-toggle {
             border-color: var(--yellow-border);
             background: var(--yellow-bg);
             color: var(--yellow);
         }
+
+        /* User mode banner */
+        .user-mode-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: var(--blue-bg);
+            border: 1px solid rgba(96, 165, 250, 0.3);
+            border-radius: var(--radius-sm);
+            margin-bottom: 20px;
+            font-size: 0.85rem;
+            color: var(--blue);
+        }
+        body.admin-mode .user-mode-banner { display: none; }
     </style>
 </head>
 <body>
@@ -561,6 +578,11 @@
             <div class="stat-value" style="color: var(--red)">{{ stats.missed }}</div>
             <div class="stat-label">Manquées ✗</div>
         </div>
+    </div>
+
+    <!-- User mode info banner -->
+    <div class="user-mode-banner" id="user-banner">
+        👤 Mode utilisateur — confirmez vos sorties de poubelles et consultez le calendrier.
     </div>
 
     <!-- Tabs -->
@@ -1241,11 +1263,62 @@ async function deleteDate(dateStr) {
     }
 }
 
-// ======= ADMIN MODE =======
+// ======= ADMIN MODE (HA user detection) =======
+let isHaAdmin = false;
+
+function detectHaAdmin() {
+    try {
+        // Ingress iframe is same-origin with HA frontend
+        // Access the parent window's home-assistant element to get user info
+        const ha = window.parent.document.querySelector('home-assistant');
+        if (ha && ha.hass && ha.hass.user) {
+            return ha.hass.user.is_admin === true;
+        }
+        // Alternative: try custom-panel approach
+        if (window.parent.hassConnection) {
+            const conn = window.parent.hassConnection;
+            if (conn.options && conn.options.auth) {
+                return true; // Has auth connection = likely admin
+            }
+        }
+    } catch(e) {
+        // Cross-origin or no parent (standalone access) - default to admin for backward compat
+        console.log('HA admin detection failed (standalone mode?):', e.message);
+        return true;
+    }
+    // If HA detected but no user info yet, default to non-admin
+    return false;
+}
+
+function applyAdminMode(isAdmin) {
+    isHaAdmin = isAdmin;
+    const btn = document.getElementById('admin-toggle-btn');
+    const banner = document.getElementById('user-banner');
+
+    if (isAdmin) {
+        // Show admin toggle for HA admins
+        btn.classList.add('visible');
+        // Restore admin mode preference from localStorage
+        if (localStorage.getItem('poubelles_admin') !== '0') {
+            document.body.classList.add('admin-mode');
+            btn.textContent = '🔓 Admin';
+        } else {
+            btn.textContent = '🔒 Admin';
+        }
+    } else {
+        // Non-admin: hide toggle, force user mode
+        btn.classList.remove('visible');
+        document.body.classList.remove('admin-mode');
+        if (banner) banner.style.display = 'flex';
+    }
+}
+
 function toggleAdminMode() {
+    if (!isHaAdmin) return; // Only HA admins can toggle
     const isAdmin = document.body.classList.toggle('admin-mode');
     localStorage.setItem('poubelles_admin', isAdmin ? '1' : '0');
-    updateAdminButton();
+    const btn = document.getElementById('admin-toggle-btn');
+    btn.textContent = isAdmin ? '🔓 Admin' : '🔒 Admin';
     // Re-render calendar to update click behavior
     if (document.getElementById('tab-calendar').classList.contains('active')) {
         renderMiniCalendar();
@@ -1257,18 +1330,21 @@ function toggleAdminMode() {
     }
 }
 
-function updateAdminButton() {
-    const btn = document.getElementById('admin-toggle-btn');
-    const isAdmin = document.body.classList.contains('admin-mode');
-    btn.textContent = isAdmin ? '🔓 Admin' : '🔒 Admin';
-}
-
-// Restore admin mode from localStorage
+// Detect admin status on load
 (function() {
-    if (localStorage.getItem('poubelles_admin') === '1') {
-        document.body.classList.add('admin-mode');
+    // Retry detection a few times (HA frontend may not be fully loaded yet)
+    let attempts = 0;
+    function tryDetect() {
+        const admin = detectHaAdmin();
+        applyAdminMode(admin);
+        // If no user found and we're in ingress, retry (HA might still be loading)
+        if (!admin && attempts < 5) {
+            attempts++;
+            setTimeout(tryDetect, 500);
+        }
     }
-    updateAdminButton();
+    // First try immediately
+    tryDetect();
 })();
 
 // Init
