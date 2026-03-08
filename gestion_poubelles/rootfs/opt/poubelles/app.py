@@ -86,7 +86,8 @@ def get_settings():
         "reminder_minute": REMINDER_MINUTE,
         "notification_service": NOTIFICATION_SERVICE,
         "reminder_enabled": True,
-        "confirmation_timeout_minutes": 120,
+        "reminder_repeat_minutes": 30,
+        "reminder_repeat_max": 5,
     }
     saved = load_json(SETTINGS_FILE, {})
     defaults.update(saved)
@@ -520,17 +521,17 @@ def ha_api(method: str, endpoint: str, data: dict = None):
 
 
 def get_notify_services():
-    """Fetch available notification services from Home Assistant."""
+    """Fetch available mobile notification services from Home Assistant."""
     result = ha_api("GET", "services")
     services = []
     if result and isinstance(result, list):
         for domain_info in result:
             if domain_info.get("domain") == "notify":
                 for svc_name in domain_info.get("services", {}):
-                    full_name = f"notify.{svc_name}"
-                    services.append(full_name)
-    # Sort: mobile_app services first, then others
-    services.sort(key=lambda s: (0 if "mobile_app" in s else 1, s))
+                    # Only keep mobile_app services (actual phone devices)
+                    if "mobile_app" in svc_name:
+                        services.append(f"notify.{svc_name}")
+    services.sort()
     return services
 
 
@@ -569,6 +570,49 @@ def send_notification(title: str, message: str, data: dict = None):
     return results
 
 
+def _bins_confirmed_for(date_str):
+    """Check if all bins for a date have been confirmed."""
+    history = get_history()
+    cal = get_calendar()
+    if date_str not in cal:
+        return True  # No bins = nothing to confirm
+    bins = cal[date_str]
+    statuses = history.get(date_str, {})
+    return all(statuses.get(b) in ("done", "missed") for b in bins)
+
+
+def _build_reminder_message(bins, is_followup=False):
+    """Build notification message and data for a reminder."""
+    bin_names = []
+    for b in bins:
+        if b == "jaune":
+            bin_names.append("🟡 Poubelle Jaune (recyclables)")
+        elif b == "verte":
+            bin_names.append("🟢 Poubelle Verte (ordures)")
+
+    bin_list = "\n".join(bin_names)
+    prefix = "RAPPEL : " if is_followup else ""
+    message = f"{prefix}Demain c'est jour de collecte !\n\n{bin_list}\n\nPensez à sortir vos poubelles ce soir."
+
+    # Add tap action to open the addon panel
+    ingress = INGRESS_ENTRY or "/"
+    notif_data = {
+        "url": ingress,           # iOS companion app
+        "clickAction": ingress,   # Android companion app
+        "tag": "poubelles_reminder",
+        "actions": [
+            {
+                "action": "URI",
+                "title": "✅ Ouvrir Poubelles",
+                "uri": ingress,
+            }
+        ],
+    }
+
+    title = "🗑️ Rappel Poubelles" if not is_followup else "🗑️ Rappel Poubelles (relance)"
+    return title, message, notif_data
+
+
 def send_reminder_for_tomorrow():
     """Check if there are bins to put out tomorrow and send a reminder."""
     settings = get_settings()
@@ -578,24 +622,62 @@ def send_reminder_for_tomorrow():
     tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
     calendar = get_calendar()
 
-    if tomorrow in calendar:
-        bins = calendar[tomorrow]
-        bin_names = []
-        for b in bins:
-            if b == "jaune":
-                bin_names.append("🟡 Poubelle Jaune (recyclables)")
-            elif b == "verte":
-                bin_names.append("🟢 Poubelle Verte (ordures)")
+    if tomorrow not in calendar:
+        return
 
-        if bin_names:
-            bin_list = "\n".join(bin_names)
-            message = f"Demain c'est jour de collecte !\n\n{bin_list}\n\nPensez à sortir vos poubelles ce soir."
+    bins = calendar[tomorrow]
+    if not bins:
+        return
 
-            send_notification(
-                title="🗑️ Rappel Poubelles",
-                message=message,
+    # Check if already confirmed
+    if _bins_confirmed_for(tomorrow):
+        logger.info(f"Bins for {tomorrow} already confirmed, skipping reminder")
+        return
+
+    title, message, data = _build_reminder_message(bins, is_followup=False)
+    send_notification(title=title, message=message, data=data)
+    logger.info(f"Reminder sent for {tomorrow}: {bins}")
+
+    # Schedule follow-up reminders
+    repeat_minutes = settings.get("reminder_repeat_minutes", 30)
+    repeat_max = settings.get("reminder_repeat_max", 5)
+
+    if repeat_minutes > 0 and repeat_max > 0:
+        for i in range(1, repeat_max + 1):
+            run_time = datetime.now() + timedelta(minutes=repeat_minutes * i)
+            scheduler.add_job(
+                send_followup_reminder,
+                "date",
+                run_date=run_time,
+                args=[tomorrow, i],
+                id=f"followup_{tomorrow}_{i}",
+                replace_existing=True,
             )
-            logger.info(f"Reminder sent for {tomorrow}: {bins}")
+        logger.info(f"Scheduled {repeat_max} follow-ups every {repeat_minutes}min for {tomorrow}")
+
+
+def send_followup_reminder(date_str, attempt):
+    """Send a follow-up reminder if not yet confirmed."""
+    if _bins_confirmed_for(date_str):
+        logger.info(f"Follow-up #{attempt} for {date_str}: already confirmed, cancelling remaining")
+        # Cancel remaining follow-ups
+        settings = get_settings()
+        repeat_max = settings.get("reminder_repeat_max", 5)
+        for j in range(attempt, repeat_max + 1):
+            try:
+                scheduler.remove_job(f"followup_{date_str}_{j}")
+            except Exception:
+                pass
+        return
+
+    calendar = get_calendar()
+    bins = calendar.get(date_str, [])
+    if not bins:
+        return
+
+    title, message, data = _build_reminder_message(bins, is_followup=True)
+    send_notification(title=title, message=message, data=data)
+    logger.info(f"Follow-up #{attempt} sent for {date_str}")
 
 
 # ---------------------------------------------------------------------------
@@ -610,8 +692,11 @@ def setup_scheduler():
     hour = settings.get("reminder_hour", REMINDER_HOUR)
     minute = settings.get("reminder_minute", REMINDER_MINUTE)
 
-    # Remove existing jobs
-    scheduler.remove_all_jobs()
+    # Remove only the daily reminder job (keep any active follow-ups)
+    try:
+        scheduler.remove_job("daily_reminder")
+    except Exception:
+        pass
 
     # Daily reminder
     scheduler.add_job(
@@ -814,6 +899,17 @@ def api_confirm():
         history[d] = {}
     history[d][bin_type] = status
     save_history(history)
+
+    # Cancel follow-up reminders if all bins confirmed
+    if _bins_confirmed_for(d):
+        settings = get_settings()
+        repeat_max = settings.get("reminder_repeat_max", 5)
+        for i in range(1, repeat_max + 1):
+            try:
+                scheduler.remove_job(f"followup_{d}_{i}")
+            except Exception:
+                pass
+        logger.info(f"All bins confirmed for {d}, cancelled follow-up reminders")
 
     return jsonify({"success": True})
 
