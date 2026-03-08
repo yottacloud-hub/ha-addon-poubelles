@@ -763,6 +763,31 @@
                 </div>
             </div>
 
+            <div class="setting-row">
+                <div class="setting-info">
+                    <h3>Relance si non confirmé</h3>
+                    <p>Renvoie la notification toutes les X minutes tant que vous n'avez pas confirmé</p>
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <input type="number" id="setting-repeat-minutes"
+                        value="{{ settings.get('reminder_repeat_minutes', 30) }}"
+                        min="0" max="120" style="width:60px; text-align:center;"
+                        onchange="saveSetting('reminder_repeat_minutes', parseInt(this.value))">
+                    <span style="font-size:0.85rem; color:var(--text-dim);">min</span>
+                </div>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <h3>Nombre max de relances</h3>
+                    <p>Nombre de rappels supplémentaires (0 = pas de relance)</p>
+                </div>
+                <input type="number" id="setting-repeat-max"
+                    value="{{ settings.get('reminder_repeat_max', 5) }}"
+                    min="0" max="20" style="width:60px; text-align:center;"
+                    onchange="saveSetting('reminder_repeat_max', parseInt(this.value))">
+            </div>
+
         </div>
 
         <div class="card">
