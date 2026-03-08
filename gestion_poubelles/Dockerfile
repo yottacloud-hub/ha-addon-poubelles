@@ -7,7 +7,10 @@ RUN apk add --no-cache \
     py3-pip \
     tesseract-ocr \
     tesseract-ocr-data-fra \
-    poppler-utils
+    poppler-utils \
+    bash \
+    jq \
+    curl
 
 # Install Python packages
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -22,8 +25,11 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # Copy application
 COPY rootfs /
+COPY run.sh /
 
-# Make S6 service scripts executable
-RUN chmod a+x /etc/s6-overlay/s6-rc.d/poubelles/run
+# Make run script executable
+RUN chmod a+x /run.sh
 
 WORKDIR /opt/poubelles
+
+CMD [ "/run.sh" ]
