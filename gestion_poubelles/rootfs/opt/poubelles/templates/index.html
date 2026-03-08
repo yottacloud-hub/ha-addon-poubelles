@@ -763,25 +763,28 @@
                 </div>
             </div>
 
-            <div class="setting-row">
-                <div class="setting-info">
-                    <h3>Service de notification</h3>
-                    <p>Service HA utilisé pour envoyer les notifications</p>
-                </div>
-                <input type="text" id="setting-notif-service" value="{{ settings.notification_service }}"
-                    style="width:220px" placeholder="notify.notify"
-                    onchange="saveSetting('notification_service', this.value)">
-            </div>
         </div>
 
         <div class="card">
-            <div class="card-title">🔔 Test</div>
-            <p style="color:var(--text-dim); font-size:0.88rem; margin-bottom:12px;">
-                Envoyez une notification de test pour vérifier que tout fonctionne.
+            <div class="card-title">📱 Appareils de notification
+                <button class="btn btn-sm" style="margin-left:auto" onclick="loadNotifyDevices()">↻ Rafraîchir</button>
+            </div>
+            <p style="color:var(--text-dim); font-size:0.85rem; margin-bottom:12px;">
+                Sélectionnez les appareils qui recevront les rappels de collecte.
+                Les services <code>mobile_app_*</code> correspondent à vos téléphones avec l'app HA Companion.
             </p>
-            <button class="btn btn-primary" onclick="testNotification()">
-                📲 Envoyer un test
-            </button>
+            <div id="notify-devices-list" style="margin-bottom:12px;">
+                <span class="spinner"></span> Chargement des appareils...
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button class="btn btn-primary" onclick="saveNotifyDevices()">
+                    💾 Enregistrer la sélection
+                </button>
+                <button class="btn" onclick="testNotification()">
+                    📲 Envoyer un test
+                </button>
+            </div>
+            <div id="notif-test-result" style="margin-top:8px; font-size:0.85rem;"></div>
         </div>
 
         <div class="card">
@@ -809,6 +812,7 @@ document.querySelectorAll('.tab').forEach(tab => {
         document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
 
         if (tab.dataset.tab === 'calendar') renderMiniCalendar();
+        if (tab.dataset.tab === 'settings') loadNotifyDevices();
     });
 });
 
@@ -1071,11 +1075,81 @@ async function saveReminderTime() {
     }
 }
 
-async function testNotification() {
+// ======= NOTIFICATION DEVICES =======
+async function loadNotifyDevices() {
+    const container = document.getElementById('notify-devices-list');
+    container.innerHTML = '<span class="spinner"></span> Chargement...';
     try {
-        await fetch(API('/api/test-notification'), {method: 'POST'});
-        showToast('Notification de test envoyée !');
+        const resp = await fetch(API('/api/notify-services'));
+        const data = await resp.json();
+        const services = data.services || [];
+        const selected = data.selected || [];
+
+        if (services.length === 0) {
+            container.innerHTML = `
+                <div style="color:var(--text-dim); padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm);">
+                    Aucun service de notification trouvé.<br>
+                    <small>Assurez-vous que l'app HA Companion est installée sur votre téléphone et connectée.</small>
+                </div>`;
+            return;
+        }
+
+        let html = '';
+        for (const svc of services) {
+            const checked = selected.includes(svc) ? 'checked' : '';
+            const isMobile = svc.includes('mobile_app');
+            const icon = isMobile ? '📱' : '🔔';
+            const label = isMobile ? svc.replace('notify.mobile_app_', '').replace(/_/g, ' ') : svc;
+            html += `
+                <label class="checkbox-label" style="margin-bottom:6px; display:flex;">
+                    <input type="checkbox" class="notify-device-cb" value="${svc}" ${checked}>
+                    ${icon} <span style="text-transform:capitalize">${label}</span>
+                    <small style="color:var(--text-dim); margin-left:auto;">${svc}</small>
+                </label>`;
+        }
+        container.innerHTML = html;
     } catch(e) {
+        container.innerHTML = `<span style="color:var(--red)">Erreur: ${e.message}</span>`;
+    }
+}
+
+async function saveNotifyDevices() {
+    const checkboxes = document.querySelectorAll('.notify-device-cb:checked');
+    const devices = Array.from(checkboxes).map(cb => cb.value);
+    if (devices.length === 0) {
+        showToast('Sélectionnez au moins un appareil', 'error');
+        return;
+    }
+    try {
+        const resp = await fetch(API('/api/notification-devices'), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({devices})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(`${devices.length} appareil(s) configuré(s) !`);
+        }
+    } catch(e) {
+        showToast('Erreur', 'error');
+    }
+}
+
+async function testNotification() {
+    const resultDiv = document.getElementById('notif-test-result');
+    resultDiv.innerHTML = '<span class="spinner"></span> Envoi en cours...';
+    try {
+        const resp = await fetch(API('/api/test-notification'), {method: 'POST'});
+        const data = await resp.json();
+        if (resp.ok) {
+            resultDiv.innerHTML = '<span style="color:var(--success)">✅ Notification envoyée ! Vérifiez votre téléphone.</span>';
+            showToast('Notification de test envoyée !');
+        } else {
+            resultDiv.innerHTML = `<span style="color:var(--red)">❌ ${data.error || 'Erreur'}</span>`;
+            showToast('Erreur d\'envoi', 'error');
+        }
+    } catch(e) {
+        resultDiv.innerHTML = `<span style="color:var(--red)">❌ Erreur réseau: ${e.message}</span>`;
         showToast('Erreur d\'envoi', 'error');
     }
 }
