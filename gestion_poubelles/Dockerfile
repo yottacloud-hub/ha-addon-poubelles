@@ -5,22 +5,20 @@ FROM ${BUILD_FROM}
 RUN apk add --no-cache \
     python3 \
     py3-pip \
-    py3-pillow \
-    py3-numpy \
     tesseract-ocr \
     tesseract-ocr-data-fra \
     poppler-utils
 
 # Install Python packages
 RUN pip3 install --no-cache-dir --break-system-packages \
-    flask==3.0.0 \
-    pytesseract==0.3.10 \
-    pdf2image==1.17.0 \
-    Pillow==10.2.0 \
-    requests==2.31.0 \
-    python-dateutil==2.9.0 \
-    apscheduler==3.10.4 \
-    werkzeug==3.0.1
+    flask \
+    pytesseract \
+    pdf2image \
+    Pillow \
+    requests \
+    python-dateutil \
+    apscheduler \
+    werkzeug
 
 # Copy application
 COPY rootfs /
