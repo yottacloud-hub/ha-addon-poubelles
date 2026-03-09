@@ -29,3 +29,4 @@ schema:
   notification_service: str
 map:
   - share:rw
+  - config:rw
