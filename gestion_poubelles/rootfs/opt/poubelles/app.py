@@ -708,9 +708,102 @@ def setup_scheduler():
         replace_existing=True,
     )
 
+    # Periodic sensor update (every 5 min)
+    try:
+        scheduler.remove_job("sensor_update")
+    except Exception:
+        pass
+    scheduler.add_job(
+        update_ha_sensors,
+        "interval",
+        minutes=5,
+        id="sensor_update",
+        replace_existing=True,
+    )
+
     if not scheduler.running:
         scheduler.start()
     logger.info(f"Scheduler configured: reminder at {hour:02d}:{minute:02d}")
+
+
+# ---------------------------------------------------------------------------
+# HA sensor entities + card auto-install
+# ---------------------------------------------------------------------------
+
+def update_ha_sensors():
+    """Create/update HA sensor entities so dashboard cards can display data."""
+    if not SUPERVISOR_TOKEN:
+        return
+
+    calendar_data = get_calendar()
+    history = get_history()
+    today = date.today()
+    today_str = today.isoformat()
+    tomorrow_str = (today + timedelta(days=1)).isoformat()
+
+    future = sorted([d for d in calendar_data.keys() if d >= today_str])[:10]
+
+    upcoming = []
+    for d in future:
+        bins = calendar_data[d]
+        status = history.get(d, {})
+        upcoming.append({
+            "date": d,
+            "date_formatted": format_date_fr(d),
+            "bins": bins,
+            "status": {b: status.get(b, "") for b in bins},
+            "is_tomorrow": d == tomorrow_str,
+            "is_today": d == today_str,
+        })
+
+    next_date = future[0] if future else None
+    next_bins = calendar_data.get(next_date, []) if next_date else []
+
+    headers = {
+        "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        requests.post(
+            "http://supervisor/core/api/states/sensor.poubelles_prochaine_collecte",
+            headers=headers,
+            json={
+                "state": format_date_fr(next_date) if next_date else "Aucune",
+                "attributes": {
+                    "friendly_name": "Prochaine collecte poubelles",
+                    "icon": "mdi:delete-variant",
+                    "next_date": next_date or "",
+                    "next_bins": next_bins,
+                    "is_tomorrow": next_date == tomorrow_str if next_date else False,
+                    "is_today": next_date == today_str if next_date else False,
+                    "upcoming": upcoming,
+                    "ingress_entry": INGRESS_ENTRY,
+                    "addon_slug": "local_gestion_poubelles",
+                    "total_scheduled": len(calendar_data),
+                }
+            },
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update HA sensor: {e}")
+
+
+def install_lovelace_card():
+    """Copy poubelles-card.js to /config/www/ for Lovelace dashboard use."""
+    config_www = Path("/config/www")
+    try:
+        config_www.mkdir(parents=True, exist_ok=True)
+        card_src = Path(__file__).parent / "static" / "poubelles-card.js"
+        card_dst = config_www / "poubelles-card.js"
+        if card_src.exists():
+            import shutil
+            shutil.copy2(card_src, card_dst)
+            logger.info(f"Lovelace card installed: {card_dst}")
+        else:
+            logger.warning(f"Card source not found: {card_src}")
+    except Exception as e:
+        logger.warning(f"Failed to install Lovelace card: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -830,6 +923,7 @@ def upload_calendar():
         else:
             existing[d] = bins
     save_calendar(existing)
+    update_ha_sensors()
 
     return jsonify({
         "success": True,
@@ -861,6 +955,7 @@ def api_set_calendar():
         calendar[data["date"]] = data["bins"]
 
     save_calendar(calendar)
+    update_ha_sensors()
     return jsonify({"success": True, "total": len(calendar)})
 
 
@@ -869,6 +964,7 @@ def api_clear_calendar():
     """Clear all dates from the calendar."""
     save_calendar({})
     save_history({})
+    update_ha_sensors()
     return jsonify({"success": True})
 
 
@@ -880,6 +976,7 @@ def api_delete_date():
     if d and d in calendar:
         del calendar[d]
         save_calendar(calendar)
+    update_ha_sensors()
     return jsonify({"success": True})
 
 
@@ -911,6 +1008,7 @@ def api_confirm():
                 pass
         logger.info(f"All bins confirmed for {d}, cancelled follow-up reminders")
 
+    update_ha_sensors()
     return jsonify({"success": True})
 
 
@@ -1030,6 +1128,8 @@ if __name__ == "__main__":
     logger.info("=" * 50)
 
     setup_scheduler()
+    install_lovelace_card()
+    update_ha_sensors()
     port = int(os.environ.get("INGRESS_PORT", "8099"))
     logger.info(f"Starting Gestion Poubelles on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
