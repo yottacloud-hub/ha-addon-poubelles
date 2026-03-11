@@ -1,20 +1,17 @@
 /**
  * Poubelles Card - Custom Lovelace card for Gestion Poubelles addon.
- * Displays upcoming bin collections with confirm/miss buttons.
  * Works for ALL HA users (admin and non-admin).
  *
- * Configuration:
+ * Config:
  *   type: custom:poubelles-card
- *   entity: sensor.poubelles_prochaine_collecte  (default)
- *   show_calendar: true  (optional, show mini calendar)
- *   max_items: 5          (optional)
+ *   entity: sensor.poubelles_prochaine_collecte
+ *   max_items: 5
  */
 class PoubellesCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._ingressReady = false;
-    this._ingressEntry = "";
+    this._pendingActions = new Set();
   }
 
   set hass(hass) {
@@ -25,7 +22,6 @@ class PoubellesCard extends HTMLElement {
   setConfig(config) {
     this._config = {
       entity: "sensor.poubelles_prochaine_collecte",
-      show_calendar: false,
       max_items: 5,
       ...config,
     };
@@ -43,68 +39,57 @@ class PoubellesCard extends HTMLElement {
     return { entity: "sensor.poubelles_prochaine_collecte" };
   }
 
-  async _ensureIngress() {
-    if (this._ingressReady) return true;
-    const stateObj = this._hass.states[this._config.entity];
-    if (!stateObj) return false;
-    this._ingressEntry = stateObj.attributes.ingress_entry || "";
-    const slug = stateObj.attributes.addon_slug || "local_gestion_poubelles";
-    if (!this._ingressEntry) return false;
-    try {
-      await this._hass.callWS({
-        type: "supervisor/api",
-        endpoint: "/ingress/session",
-        method: "post",
-        data: { addon: slug },
-      });
-      this._ingressReady = true;
-      return true;
-    } catch (e) {
-      // Non-admin users might not have WS access, but HTTP ingress
-      // still works with HA session cookie when admin: false
-      this._ingressReady = true;
-      return true;
-    }
-  }
-
+  /**
+   * Confirm a bin by writing to a command sensor that the addon polls.
+   * Uses hass.callApi which works for ALL authenticated users.
+   */
   async _confirmBin(date, binType, status) {
-    const ok = await this._ensureIngress();
-    if (!ok || !this._ingressEntry) {
-      this._showToast("Impossible de contacter l'addon");
-      return;
-    }
+    const actionKey = `${date}:${binType}`;
+    if (this._pendingActions.has(actionKey)) return;
+    this._pendingActions.add(actionKey);
+
+    // Optimistic UI immediately
+    this._optimisticUpdate(date, binType, status);
+    this._showToast(
+      status === "done" ? "Poubelle confirmee !" : "Marquee comme manquee"
+    );
+
     try {
-      const resp = await fetch(this._ingressEntry + "/api/confirm", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, bin_type: binType, status }),
+      // Write command to a sensor the addon polls
+      const cmd = `${status}:${date}:${binType}:${Date.now()}`;
+      await this._hass.callApi("POST", "states/sensor.poubelles_command", {
+        state: cmd,
+        attributes: {
+          friendly_name: "Poubelles Command",
+          icon: "mdi:delete-check",
+          action: status,
+          date: date,
+          bin_type: binType,
+          timestamp: Date.now(),
+        },
       });
-      if (resp.ok) {
-        this._showToast(
-          status === "done" ? "Poubelle confirmee !" : "Marquee comme manquee"
-        );
-        // Optimistic UI update
-        this._optimisticUpdate(date, binType, status);
-      } else {
-        this._showToast("Erreur serveur");
-      }
     } catch (e) {
-      this._showToast("Erreur de connexion");
+      console.error("Poubelles card: confirm failed", e);
+      this._showToast("Erreur - reessayez");
     }
+
+    setTimeout(() => this._pendingActions.delete(actionKey), 3000);
   }
 
   _optimisticUpdate(date, binType, status) {
-    const items = this.shadowRoot.querySelectorAll(
+    const btns = this.shadowRoot.querySelectorAll(
       `[data-date="${date}"][data-bin="${binType}"]`
     );
-    items.forEach((item) => {
-      const actions = item.querySelector(".actions");
-      if (actions) {
-        actions.innerHTML =
-          status === "done"
-            ? '<span class="status done">Sortie</span>'
-            : '<span class="status missed">Manquee</span>';
+    btns.forEach((btn) => {
+      const row = btn.closest(".actions");
+      if (row) {
+        // Replace all buttons for this bin with status text
+        const siblings = row.querySelectorAll(`[data-bin="${binType}"]`);
+        siblings.forEach((s) => s.remove());
+        const span = document.createElement("span");
+        span.className = `status ${status === "done" ? "done" : "missed"}`;
+        span.textContent = status === "done" ? "Sortie !" : "Manquee";
+        row.appendChild(span);
       }
     });
   }
@@ -137,7 +122,6 @@ class PoubellesCard extends HTMLElement {
     const upcoming = stateObj.attributes.upcoming || [];
     const maxItems = this._config.max_items || 5;
     const items = upcoming.slice(0, maxItems);
-    this._ingressEntry = stateObj.attributes.ingress_entry || "";
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -145,10 +129,10 @@ class PoubellesCard extends HTMLElement {
         ha-card { overflow: hidden; }
         .header {
           display: flex; align-items: center; justify-content: space-between;
-          padding: 16px 16px 0;
+          padding: 16px 16px 8px;
         }
         .header h2 {
-          margin: 0; font-size: 1.1rem; font-weight: 600;
+          margin: 0; font-size: 1.15rem; font-weight: 600;
           display: flex; align-items: center; gap: 8px;
         }
         .header .count {
@@ -156,11 +140,10 @@ class PoubellesCard extends HTMLElement {
           background: var(--divider-color); padding: 2px 8px;
           border-radius: 10px;
         }
-        .items { padding: 8px 16px 16px; }
+        .items { padding: 4px 16px 16px; }
         .item {
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 10px 12px; margin-bottom: 6px;
-          border-radius: 10px; border: 1px solid var(--divider-color);
+          padding: 14px; margin-bottom: 8px;
+          border-radius: 12px; border: 1px solid var(--divider-color);
           transition: background 0.15s;
         }
         .item:last-child { margin-bottom: 0; }
@@ -170,33 +153,58 @@ class PoubellesCard extends HTMLElement {
         .item.today {
           border-color: #4ade80; background: rgba(74,222,128,0.08);
         }
-        .date-info { flex: 1; min-width: 0; }
-        .date-text { font-weight: 600; font-size: 0.88rem; }
+        .item-top {
+          display: flex; align-items: center; justify-content: space-between;
+          margin-bottom: 10px;
+        }
+        .date-text { font-weight: 600; font-size: 0.95rem; }
         .date-label {
-          font-size: 0.72rem; font-weight: 700; margin-left: 6px;
-          padding: 1px 6px; border-radius: 4px;
+          font-size: 0.7rem; font-weight: 700; margin-left: 8px;
+          padding: 2px 8px; border-radius: 6px; text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
         .date-label.today-label { background: rgba(74,222,128,0.2); color: #16a34a; }
         .date-label.tomorrow-label { background: rgba(245,200,66,0.2); color: #b8860b; }
-        .bins { display: flex; gap: 4px; margin-top: 3px; }
+        .bins { display: flex; gap: 6px; }
         .bin-badge {
-          font-size: 0.72rem; font-weight: 600; padding: 2px 8px;
-          border-radius: 12px; display: inline-flex; align-items: center; gap: 3px;
+          font-size: 0.78rem; font-weight: 600; padding: 3px 10px;
+          border-radius: 12px; display: inline-flex; align-items: center; gap: 4px;
         }
         .bin-badge.jaune { background: rgba(245,200,66,0.15); color: #b8860b; }
         .bin-badge.verte { background: rgba(74,222,128,0.15); color: #16a34a; }
-        .actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: 8px; }
-        .btn {
-          border: none; border-radius: 8px; padding: 6px 10px;
-          font-size: 0.75rem; font-weight: 600; cursor: pointer;
-          font-family: inherit; transition: opacity 0.15s;
+
+        /* Big action buttons */
+        .actions {
+          display: flex; gap: 8px; margin-top: 10px;
         }
-        .btn:hover { opacity: 0.8; }
-        .btn-ok { background: rgba(34,197,94,0.15); color: #16a34a; }
-        .btn-miss { background: rgba(248,113,113,0.15); color: #dc2626; }
-        .status { font-size: 0.75rem; font-weight: 600; padding: 4px 8px; }
-        .status.done { color: #16a34a; }
-        .status.missed { color: #dc2626; }
+        .btn {
+          flex: 1; border: none; border-radius: 10px;
+          padding: 12px 16px; font-size: 0.9rem; font-weight: 700;
+          cursor: pointer; font-family: inherit;
+          transition: all 0.15s; display: flex; align-items: center;
+          justify-content: center; gap: 6px;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn-ok {
+          background: rgba(34,197,94,0.18); color: #16a34a;
+          border: 2px solid rgba(34,197,94,0.35);
+        }
+        .btn-ok:active { background: rgba(34,197,94,0.3); }
+        .btn-miss {
+          background: rgba(248,113,113,0.12); color: #dc2626;
+          border: 2px solid rgba(248,113,113,0.25);
+          flex: 0.5;
+        }
+        .btn-miss:active { background: rgba(248,113,113,0.25); }
+
+        .status {
+          font-size: 0.85rem; font-weight: 700; padding: 8px 12px;
+          border-radius: 8px; text-align: center;
+        }
+        .status.done { color: #16a34a; background: rgba(34,197,94,0.1); }
+        .status.missed { color: #dc2626; background: rgba(248,113,113,0.1); }
+
         .empty {
           text-align: center; padding: 24px 16px;
           color: var(--secondary-text-color); font-size: 0.9rem;
@@ -204,15 +212,11 @@ class PoubellesCard extends HTMLElement {
         .empty-icon { font-size: 2rem; margin-bottom: 8px; }
         #toast {
           position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(60px);
-          background: var(--primary-color); color: #fff; padding: 8px 16px;
-          border-radius: 8px; font-size: 0.82rem; opacity: 0;
+          background: var(--primary-color); color: #fff; padding: 10px 20px;
+          border-radius: 10px; font-size: 0.88rem; font-weight: 600; opacity: 0;
           transition: all 0.25s; z-index: 999; pointer-events: none;
         }
         #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-        @media (max-width: 500px) {
-          .item { flex-direction: column; align-items: flex-start; gap: 8px; }
-          .actions { margin-left: 0; width: 100%; justify-content: flex-end; }
-        }
       </style>
       <ha-card>
         <div class="header">
@@ -230,9 +234,10 @@ class PoubellesCard extends HTMLElement {
       <div id="toast"></div>
     `;
 
-    // Attach event listeners
+    // Attach event listeners to buttons
     this.shadowRoot.querySelectorAll("[data-action]").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
         this._confirmBin(btn.dataset.date, btn.dataset.bin, btn.dataset.action);
       });
     });
@@ -241,40 +246,48 @@ class PoubellesCard extends HTMLElement {
   _renderItem(col) {
     const cls = col.is_today ? "today" : col.is_tomorrow ? "tomorrow" : "";
     const label = col.is_today
-      ? '<span class="date-label today-label">AUJOURD\'HUI</span>'
+      ? '<span class="date-label today-label">Aujourd\'hui</span>'
       : col.is_tomorrow
-        ? '<span class="date-label tomorrow-label">DEMAIN</span>'
+        ? '<span class="date-label tomorrow-label">Demain</span>'
         : "";
 
     const binsHtml = col.bins
       .map((b) => {
         const icon = b === "jaune" ? "🟡" : "🟢";
         const name = b === "jaune" ? "Jaune" : "Verte";
-        const st = col.status[b] || "";
-        let suffix = "";
-        if (st === "done") suffix = " ✅";
-        else if (st === "missed") suffix = " ❌";
-        return `<span class="bin-badge ${b}">${icon} ${name}${suffix}</span>`;
+        return `<span class="bin-badge ${b}">${icon} ${name}</span>`;
       })
       .join("");
 
-    // Build action buttons for each unconfirmed bin
+    // Action buttons per bin - big and clear
     const actionsHtml = col.bins
       .map((b) => {
         const st = col.status[b] || "";
-        if (st) return ""; // Already confirmed
+        if (st === "done") {
+          return `<span class="status done">✅ Sortie</span>`;
+        }
+        if (st === "missed") {
+          return `<span class="status missed">❌ Manquee</span>`;
+        }
         const name = b === "jaune" ? "Jaune" : "Verte";
+        const icon = b === "jaune" ? "🟡" : "🟢";
         return `
-          <button class="btn btn-ok" data-action="done" data-date="${col.date}" data-bin="${b}" title="Sortie ${name}">✓</button>
-          <button class="btn btn-miss" data-action="missed" data-date="${col.date}" data-bin="${b}" title="Manquee ${name}">✗</button>
+          <button class="btn btn-ok" data-action="done" data-date="${col.date}" data-bin="${b}">
+            ✅ ${icon} Sortie ${name}
+          </button>
+          <button class="btn btn-miss" data-action="missed" data-date="${col.date}" data-bin="${b}">
+            ❌
+          </button>
         `;
       })
       .join("");
 
     return `
-      <div class="item ${cls}" data-date="${col.date}" data-bin="${col.bins.join(",")}">
-        <div class="date-info">
-          <div class="date-text">${col.date_formatted}${label}</div>
+      <div class="item ${cls}">
+        <div class="item-top">
+          <div>
+            <span class="date-text">${col.date_formatted}</span>${label}
+          </div>
           <div class="bins">${binsHtml}</div>
         </div>
         <div class="actions">${actionsHtml}</div>
@@ -324,6 +337,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "poubelles-card",
   name: "Poubelles",
-  description: "Affiche les prochaines collectes de poubelles avec boutons de confirmation.",
+  description:
+    "Affiche les prochaines collectes de poubelles avec boutons de confirmation.",
   preview: true,
 });
