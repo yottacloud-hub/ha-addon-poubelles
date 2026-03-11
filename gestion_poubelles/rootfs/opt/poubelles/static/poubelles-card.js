@@ -7,6 +7,8 @@
  *   entity: sensor.poubelles_prochaine_collecte
  *   max_items: 5
  */
+const POUBELLES_CARD_VERSION = "1.2.2";
+
 class PoubellesCard extends HTMLElement {
   constructor() {
     super();
@@ -55,7 +57,6 @@ class PoubellesCard extends HTMLElement {
     );
 
     try {
-      // Write command to a sensor the addon polls
       const cmd = `${status}:${date}:${binType}:${Date.now()}`;
       await this._hass.callApi("POST", "states/sensor.poubelles_command", {
         state: cmd,
@@ -77,21 +78,16 @@ class PoubellesCard extends HTMLElement {
   }
 
   _optimisticUpdate(date, binType, status) {
-    const btns = this.shadowRoot.querySelectorAll(
-      `[data-date="${date}"][data-bin="${binType}"]`
-    );
-    btns.forEach((btn) => {
-      const row = btn.closest(".actions");
-      if (row) {
-        // Replace all buttons for this bin with status text
-        const siblings = row.querySelectorAll(`[data-bin="${binType}"]`);
-        siblings.forEach((s) => s.remove());
-        const span = document.createElement("span");
-        span.className = `status ${status === "done" ? "done" : "missed"}`;
-        span.textContent = status === "done" ? "Sortie !" : "Manquee";
-        row.appendChild(span);
-      }
-    });
+    const row = this.shadowRoot.querySelector(`.item[data-date="${date}"]`);
+    if (!row) return;
+    const binRow = row.querySelector(`.bin-row[data-bin="${binType}"]`);
+    if (!binRow) return;
+    const actionsDiv = binRow.querySelector(".bin-actions");
+    if (actionsDiv) {
+      actionsDiv.innerHTML = status === "done"
+        ? `<div class="status-badge done"><span class="status-icon">&#10003;</span> Sortie</div>`
+        : `<div class="status-badge missed"><span class="status-icon">&#10007;</span> Pas sortie</div>`;
+    }
   }
 
   _showToast(msg) {
@@ -110,10 +106,14 @@ class PoubellesCard extends HTMLElement {
 
     if (!stateObj) {
       this.shadowRoot.innerHTML = `
-        <ha-card header="Poubelles">
-          <div style="padding:16px;color:var(--secondary-text-color);">
-            Entite <code>${entityId}</code> introuvable.<br>
-            <small>Verifiez que l'addon Gestion Poubelles est demarre.</small>
+        <ha-card>
+          <div style="padding:24px;text-align:center;">
+            <div style="font-size:2.5rem;margin-bottom:12px;">🗑️</div>
+            <div style="font-weight:600;font-size:1rem;margin-bottom:8px;">Poubelles</div>
+            <div style="color:var(--secondary-text-color);font-size:0.85rem;">
+              Entite <code>${entityId}</code> introuvable.<br>
+              <small>Verifiez que l'addon Gestion Poubelles est demarre.</small>
+            </div>
           </div>
         </ha-card>`;
       return;
@@ -126,107 +126,164 @@ class PoubellesCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
-        ha-card { overflow: hidden; }
-        .header {
+        ha-card { overflow: hidden; padding-bottom: 8px; }
+
+        /* Header */
+        .card-header {
           display: flex; align-items: center; justify-content: space-between;
-          padding: 16px 16px 8px;
+          padding: 20px 20px 12px;
         }
-        .header h2 {
-          margin: 0; font-size: 1.15rem; font-weight: 600;
-          display: flex; align-items: center; gap: 8px;
+        .card-title {
+          display: flex; align-items: center; gap: 10px;
+          font-size: 1.2rem; font-weight: 700;
+          color: var(--primary-text-color);
         }
-        .header .count {
-          font-size: 0.75rem; color: var(--secondary-text-color);
-          background: var(--divider-color); padding: 2px 8px;
-          border-radius: 10px;
+        .card-title-icon { font-size: 1.4rem; }
+        .card-count {
+          font-size: 0.72rem; font-weight: 600;
+          color: var(--secondary-text-color);
+          background: var(--divider-color, rgba(255,255,255,0.1));
+          padding: 3px 10px; border-radius: 12px;
         }
-        .items { padding: 4px 16px 16px; }
+
+        /* Items list */
+        .items { padding: 0 12px; }
+
+        /* Single collection item */
         .item {
-          padding: 14px; margin-bottom: 8px;
-          border-radius: 12px; border: 1px solid var(--divider-color);
-          transition: background 0.15s;
+          margin-bottom: 10px; border-radius: 16px;
+          background: var(--card-background-color, var(--ha-card-background, rgba(255,255,255,0.05)));
+          border: 1.5px solid var(--divider-color, rgba(255,255,255,0.08));
+          overflow: hidden;
+          transition: border-color 0.2s;
         }
-        .item:last-child { margin-bottom: 0; }
+        .item:last-child { margin-bottom: 4px; }
         .item.tomorrow {
-          border-color: #f5c842; background: rgba(245,200,66,0.08);
+          border-color: rgba(251, 191, 36, 0.5);
+          background: linear-gradient(135deg, rgba(251,191,36,0.08) 0%, transparent 60%);
         }
         .item.today {
-          border-color: #4ade80; background: rgba(74,222,128,0.08);
+          border-color: rgba(34, 197, 94, 0.5);
+          background: linear-gradient(135deg, rgba(34,197,94,0.08) 0%, transparent 60%);
         }
-        .item-top {
+
+        /* Date header inside item */
+        .item-header {
           display: flex; align-items: center; justify-content: space-between;
-          margin-bottom: 10px;
+          padding: 14px 16px 6px;
         }
-        .date-text { font-weight: 600; font-size: 0.95rem; }
-        .date-label {
-          font-size: 0.7rem; font-weight: 700; margin-left: 8px;
-          padding: 2px 8px; border-radius: 6px; text-transform: uppercase;
-          letter-spacing: 0.5px;
+        .date-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .date-text { font-weight: 700; font-size: 0.95rem; color: var(--primary-text-color); }
+        .date-badge {
+          font-size: 0.65rem; font-weight: 800; text-transform: uppercase;
+          letter-spacing: 0.8px; padding: 3px 10px; border-radius: 8px;
         }
-        .date-label.today-label { background: rgba(74,222,128,0.2); color: #16a34a; }
-        .date-label.tomorrow-label { background: rgba(245,200,66,0.2); color: #b8860b; }
-        .bins { display: flex; gap: 6px; }
-        .bin-badge {
-          font-size: 0.78rem; font-weight: 600; padding: 3px 10px;
-          border-radius: 12px; display: inline-flex; align-items: center; gap: 4px;
+        .date-badge.today-badge {
+          background: rgba(34,197,94,0.2); color: #22c55e;
         }
-        .bin-badge.jaune { background: rgba(245,200,66,0.15); color: #b8860b; }
-        .bin-badge.verte { background: rgba(74,222,128,0.15); color: #16a34a; }
+        .date-badge.tomorrow-badge {
+          background: rgba(251,191,36,0.2); color: #fbbf24;
+        }
 
-        /* Big action buttons */
-        .actions {
-          display: flex; gap: 8px; margin-top: 10px;
+        /* Bin rows */
+        .bin-rows { padding: 4px 12px 12px; }
+        .bin-row {
+          display: flex; align-items: center; gap: 10px;
+          padding: 8px 6px; border-radius: 12px;
+          margin-bottom: 4px;
         }
+        .bin-row:last-child { margin-bottom: 0; }
+
+        /* Bin icon + name */
+        .bin-info {
+          display: flex; align-items: center; gap: 8px;
+          min-width: 100px;
+        }
+        .bin-dot {
+          width: 14px; height: 14px; border-radius: 50%;
+          flex-shrink: 0;
+        }
+        .bin-dot.jaune { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.4); }
+        .bin-dot.verte { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4); }
+        .bin-name { font-weight: 600; font-size: 0.88rem; color: var(--primary-text-color); }
+
+        /* Action buttons */
+        .bin-actions { display: flex; gap: 8px; flex: 1; justify-content: flex-end; }
+
         .btn {
-          flex: 1; border: none; border-radius: 10px;
-          padding: 12px 16px; font-size: 0.9rem; font-weight: 700;
-          cursor: pointer; font-family: inherit;
-          transition: all 0.15s; display: flex; align-items: center;
-          justify-content: center; gap: 6px;
+          border: none; border-radius: 12px; cursor: pointer;
+          font-family: inherit; font-weight: 700; font-size: 0.85rem;
+          display: flex; align-items: center; justify-content: center; gap: 6px;
+          transition: all 0.15s ease;
           -webkit-tap-highlight-color: transparent;
+          user-select: none;
         }
-        .btn:active { transform: scale(0.97); }
+        .btn:active { transform: scale(0.95); }
+
         .btn-ok {
-          background: rgba(34,197,94,0.18); color: #16a34a;
-          border: 2px solid rgba(34,197,94,0.35);
+          flex: 1; padding: 12px 16px;
+          background: rgba(34,197,94,0.15); color: #22c55e;
+          border: 2px solid rgba(34,197,94,0.3);
         }
-        .btn-ok:active { background: rgba(34,197,94,0.3); }
+        .btn-ok:hover { background: rgba(34,197,94,0.25); }
+        .btn-ok:active { background: rgba(34,197,94,0.35); }
+
         .btn-miss {
-          background: rgba(248,113,113,0.12); color: #dc2626;
-          border: 2px solid rgba(248,113,113,0.25);
-          flex: 0.5;
+          padding: 12px 14px;
+          background: rgba(239,68,68,0.1); color: #ef4444;
+          border: 2px solid rgba(239,68,68,0.2);
         }
-        .btn-miss:active { background: rgba(248,113,113,0.25); }
+        .btn-miss:hover { background: rgba(239,68,68,0.2); }
+        .btn-miss:active { background: rgba(239,68,68,0.3); }
 
-        .status {
-          font-size: 0.85rem; font-weight: 700; padding: 8px 12px;
-          border-radius: 8px; text-align: center;
+        /* Status badges */
+        .status-badge {
+          display: flex; align-items: center; gap: 6px;
+          padding: 10px 16px; border-radius: 12px;
+          font-weight: 700; font-size: 0.85rem;
+          flex: 1; justify-content: center;
         }
-        .status.done { color: #16a34a; background: rgba(34,197,94,0.1); }
-        .status.missed { color: #dc2626; background: rgba(248,113,113,0.1); }
+        .status-badge.done {
+          background: rgba(34,197,94,0.12); color: #22c55e;
+        }
+        .status-badge.missed {
+          background: rgba(239,68,68,0.1); color: #ef4444;
+        }
+        .status-icon { font-size: 1rem; }
 
+        /* Empty state */
         .empty {
-          text-align: center; padding: 24px 16px;
-          color: var(--secondary-text-color); font-size: 0.9rem;
+          text-align: center; padding: 32px 16px;
+          color: var(--secondary-text-color);
         }
-        .empty-icon { font-size: 2rem; margin-bottom: 8px; }
+        .empty-icon { font-size: 2.5rem; margin-bottom: 12px; }
+        .empty-text { font-size: 0.9rem; }
+
+        /* Toast */
         #toast {
-          position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(60px);
-          background: var(--primary-color); color: #fff; padding: 10px 20px;
-          border-radius: 10px; font-size: 0.88rem; font-weight: 600; opacity: 0;
-          transition: all 0.25s; z-index: 999; pointer-events: none;
+          position: fixed; bottom: 20px; left: 50%;
+          transform: translateX(-50%) translateY(80px);
+          background: var(--primary-color, #03a9f4); color: #fff;
+          padding: 12px 24px; border-radius: 14px;
+          font-size: 0.88rem; font-weight: 600;
+          opacity: 0; transition: all 0.3s ease;
+          z-index: 999; pointer-events: none;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
         #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
       </style>
       <ha-card>
-        <div class="header">
-          <h2>Poubelles</h2>
-          ${stateObj.attributes.total_scheduled ? `<span class="count">${stateObj.attributes.total_scheduled} dates</span>` : ""}
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-title-icon">🗑️</span>
+            Poubelles
+          </div>
+          ${stateObj.attributes.total_scheduled ? `<span class="card-count">${stateObj.attributes.total_scheduled} collectes</span>` : ""}
         </div>
         <div class="items">
           ${
             items.length === 0
-              ? `<div class="empty"><div class="empty-icon">📭</div><p>Aucune collecte planifiee.</p></div>`
+              ? `<div class="empty"><div class="empty-icon">📭</div><p class="empty-text">Aucune collecte planifiee.</p></div>`
               : items.map((col) => this._renderItem(col)).join("")
           }
         </div>
@@ -245,52 +302,54 @@ class PoubellesCard extends HTMLElement {
 
   _renderItem(col) {
     const cls = col.is_today ? "today" : col.is_tomorrow ? "tomorrow" : "";
-    const label = col.is_today
-      ? '<span class="date-label today-label">Aujourd\'hui</span>'
+    const badge = col.is_today
+      ? '<span class="date-badge today-badge">Aujourd\'hui</span>'
       : col.is_tomorrow
-        ? '<span class="date-label tomorrow-label">Demain</span>'
+        ? '<span class="date-badge tomorrow-badge">Demain</span>'
         : "";
 
-    const binsHtml = col.bins
+    const binRows = col.bins
       .map((b) => {
-        const icon = b === "jaune" ? "🟡" : "🟢";
         const name = b === "jaune" ? "Jaune" : "Verte";
-        return `<span class="bin-badge ${b}">${icon} ${name}</span>`;
-      })
-      .join("");
-
-    // Action buttons per bin - big and clear
-    const actionsHtml = col.bins
-      .map((b) => {
         const st = col.status[b] || "";
+
+        let actionsHtml;
         if (st === "done") {
-          return `<span class="status done">✅ Sortie</span>`;
+          actionsHtml = `<div class="status-badge done"><span class="status-icon">&#10003;</span> Sortie</div>`;
+        } else if (st === "missed") {
+          actionsHtml = `<div class="status-badge missed"><span class="status-icon">&#10007;</span> Pas sortie</div>`;
+        } else {
+          actionsHtml = `
+            <button class="btn btn-ok" data-action="done" data-date="${col.date}" data-bin="${b}">
+              &#10003; Sortie
+            </button>
+            <button class="btn btn-miss" data-action="missed" data-date="${col.date}" data-bin="${b}">
+              &#10007;
+            </button>
+          `;
         }
-        if (st === "missed") {
-          return `<span class="status missed">❌ Manquee</span>`;
-        }
-        const name = b === "jaune" ? "Jaune" : "Verte";
-        const icon = b === "jaune" ? "🟡" : "🟢";
+
         return `
-          <button class="btn btn-ok" data-action="done" data-date="${col.date}" data-bin="${b}">
-            ✅ ${icon} Sortie ${name}
-          </button>
-          <button class="btn btn-miss" data-action="missed" data-date="${col.date}" data-bin="${b}">
-            ❌
-          </button>
+          <div class="bin-row" data-bin="${b}">
+            <div class="bin-info">
+              <div class="bin-dot ${b}"></div>
+              <span class="bin-name">${name}</span>
+            </div>
+            <div class="bin-actions">${actionsHtml}</div>
+          </div>
         `;
       })
       .join("");
 
     return `
-      <div class="item ${cls}">
-        <div class="item-top">
-          <div>
-            <span class="date-text">${col.date_formatted}</span>${label}
+      <div class="item ${cls}" data-date="${col.date}">
+        <div class="item-header">
+          <div class="date-info">
+            <span class="date-text">${col.date_formatted}</span>
+            ${badge}
           </div>
-          <div class="bins">${binsHtml}</div>
         </div>
-        <div class="actions">${actionsHtml}</div>
+        <div class="bin-rows">${binRows}</div>
       </div>
     `;
   }

@@ -813,7 +813,7 @@ def update_ha_sensors():
 
 
 def install_lovelace_card():
-    """Copy poubelles-card.js to /config/www/ for Lovelace dashboard use."""
+    """Copy poubelles-card.js to /config/www/ and register as Lovelace resource."""
     config_www = Path("/config/www")
     try:
         config_www.mkdir(parents=True, exist_ok=True)
@@ -823,6 +823,43 @@ def install_lovelace_card():
             import shutil
             shutil.copy2(card_src, card_dst)
             logger.info(f"Lovelace card installed: {card_dst}")
+
+            # Register/update the Lovelace resource with cache-busting version
+            if SUPERVISOR_TOKEN:
+                headers = {
+                    "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
+                    "Content-Type": "application/json",
+                }
+                card_version = "1.2.2"
+                card_url = f"/local/poubelles-card.js?v={card_version}"
+                try:
+                    resp = requests.get(
+                        "http://supervisor/core/api/config/lovelace/resources",
+                        headers=headers, timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        resources = resp.json()
+                        existing = None
+                        for r in resources:
+                            if "poubelles-card" in r.get("url", ""):
+                                existing = r
+                                break
+                        if existing:
+                            requests.patch(
+                                f"http://supervisor/core/api/config/lovelace/resources/{existing['id']}",
+                                headers=headers, timeout=10,
+                                json={"url": card_url},
+                            )
+                            logger.info(f"Updated Lovelace resource: {card_url}")
+                        else:
+                            requests.post(
+                                "http://supervisor/core/api/config/lovelace/resources",
+                                headers=headers, timeout=10,
+                                json={"url": card_url, "res_type": "module"},
+                            )
+                            logger.info(f"Added Lovelace resource: {card_url}")
+                except Exception as e:
+                    logger.warning(f"Could not register Lovelace resource: {e}")
         else:
             logger.warning(f"Card source not found: {card_src}")
     except Exception as e:
