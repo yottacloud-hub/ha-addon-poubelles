@@ -594,18 +594,28 @@ def _build_reminder_message(bins, is_followup=False):
     prefix = "RAPPEL : " if is_followup else ""
     message = f"{prefix}Demain c'est jour de collecte !\n\n{bin_list}\n\nPensez à sortir vos poubelles ce soir."
 
-    # Add tap action to open the addon panel
+    # Add tap action to open the addon panel + actionable confirm/miss buttons
     ingress = INGRESS_ENTRY or "/"
+    tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
+    bin_label = " + ".join("Jaune" if b == "jaune" else "Verte" for b in bins)
     notif_data = {
         "url": ingress,           # iOS companion app
         "clickAction": ingress,   # Android companion app
         "tag": "poubelles_reminder",
         "actions": [
             {
+                "action": f"POUBELLES_DONE_{tomorrow}",
+                "title": f"✅ Sortie ({bin_label})",
+            },
+            {
+                "action": f"POUBELLES_MISSED_{tomorrow}",
+                "title": "❌ Pas sortie",
+            },
+            {
                 "action": "URI",
-                "title": "✅ Ouvrir Poubelles",
+                "title": "📋 Ouvrir",
                 "uri": ingress,
-            }
+            },
         ],
     }
 
@@ -721,6 +731,19 @@ def setup_scheduler():
         replace_existing=True,
     )
 
+    # Poll command sensor every 3 seconds for card confirmations
+    try:
+        scheduler.remove_job("command_poll")
+    except Exception:
+        pass
+    scheduler.add_job(
+        poll_command_sensor,
+        "interval",
+        seconds=3,
+        id="command_poll",
+        replace_existing=True,
+    )
+
     if not scheduler.running:
         scheduler.start()
     logger.info(f"Scheduler configured: reminder at {hour:02d}:{minute:02d}")
@@ -804,6 +827,212 @@ def install_lovelace_card():
             logger.warning(f"Card source not found: {card_src}")
     except Exception as e:
         logger.warning(f"Failed to install Lovelace card: {e}")
+
+
+def install_notification_automations():
+    """Create HA package with automations to handle notification confirm/miss buttons."""
+    if not SUPERVISOR_TOKEN:
+        return
+
+    headers = {
+        "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        import yaml
+    except ImportError:
+        logger.warning("PyYAML not available, skipping notification automation setup")
+        return
+
+    try:
+        # 1. Write supervisor token to secrets.yaml (for rest_command auth)
+        secrets_file = Path("/config/secrets.yaml")
+        secrets = {}
+        if secrets_file.exists():
+            content = secrets_file.read_text()
+            if content.strip():
+                secrets = yaml.safe_load(content) or {}
+        secrets["poubelles_supervisor_token"] = f"Bearer {SUPERVISOR_TOKEN}"
+        secrets_file.write_text(yaml.dump(secrets, default_flow_style=False, allow_unicode=True))
+        logger.info("Supervisor token written to secrets.yaml")
+
+        # 2. Write package file with rest_command + automations
+        packages_dir = Path("/config/packages")
+        packages_dir.mkdir(parents=True, exist_ok=True)
+
+        package = {
+            "rest_command": {
+                "poubelles_set_command": {
+                    "url": "http://supervisor/core/api/states/sensor.poubelles_command",
+                    "method": "POST",
+                    "headers": {
+                        "Authorization": "!secret poubelles_supervisor_token",
+                        "Content-Type": "application/json",
+                    },
+                    "payload": (
+                        '{"state": "{{ status }}:{{ date }}:{{ bin_type }}:{{ as_timestamp(now()) | int }}", '
+                        '"attributes": {"friendly_name": "Poubelles Command", "icon": "mdi:delete-check", '
+                        '"action": "{{ status }}", "date": "{{ date }}", "bin_type": "{{ bin_type }}", '
+                        '"timestamp": {{ as_timestamp(now()) | int }}}}'
+                    ),
+                }
+            },
+            "automation": [],
+        }
+
+        for action_type, status_val in [("DONE", "done"), ("MISSED", "missed")]:
+            package["automation"].append({
+                "id": f"poubelles_notif_{status_val}",
+                "alias": f"Poubelles - {status_val.title()} via notification",
+                "description": "Cree automatiquement par l'addon Poubelles",
+                "trigger": [{
+                    "platform": "event",
+                    "event_type": "mobile_app_notification_action",
+                }],
+                "condition": [{
+                    "condition": "template",
+                    "value_template": (
+                        "{{ trigger.event.data.action is defined and "
+                        f"trigger.event.data.action.startswith('POUBELLES_{action_type}_') }}"
+                    ),
+                }],
+                "action": [{
+                    "service": "rest_command.poubelles_set_command",
+                    "data": {
+                        "status": status_val,
+                        "date": f"{{{{ trigger.event.data.action.replace('POUBELLES_{action_type}_', '') }}}}",
+                        "bin_type": "all",
+                    },
+                }],
+                "mode": "queued",
+            })
+
+        # Write package file with !secret as proper YAML tag
+        pkg_file = packages_dir / "poubelles.yaml"
+        pkg_content = yaml.dump(package, default_flow_style=False, allow_unicode=True)
+        # Fix the !secret reference (yaml.dump quotes it as a string)
+        pkg_content = pkg_content.replace(
+            "'!secret poubelles_supervisor_token'",
+            "!secret poubelles_supervisor_token"
+        ).replace(
+            '"!secret poubelles_supervisor_token"',
+            "!secret poubelles_supervisor_token"
+        )
+        pkg_file.write_text(pkg_content)
+        logger.info(f"Package written to {pkg_file}")
+
+        # 3. Ensure packages include in configuration.yaml
+        config_file = Path("/config/configuration.yaml")
+        if config_file.exists():
+            config_content = config_file.read_text()
+            if "packages:" not in config_content and "packages :" not in config_content:
+                # Add packages include
+                if "homeassistant:" in config_content:
+                    config_content = config_content.replace(
+                        "homeassistant:",
+                        "homeassistant:\n  packages: !include_dir_named packages",
+                        1,
+                    )
+                else:
+                    config_content += "\nhomeassistant:\n  packages: !include_dir_named packages\n"
+                config_file.write_text(config_content)
+                logger.info("Added packages include to configuration.yaml")
+
+        # 4. Reload automations and rest_commands
+        requests.post(
+            "http://supervisor/core/api/services/automation/reload",
+            headers=headers, timeout=10,
+        )
+        logger.info("Notification automations installed and reloaded")
+
+    except Exception as e:
+        logger.warning(f"Failed to install notification automations: {e}")
+
+
+def poll_command_sensor():
+    """Poll sensor.poubelles_command for confirm/miss actions from the card."""
+    if not SUPERVISOR_TOKEN:
+        return
+    try:
+        resp = requests.get(
+            "http://supervisor/core/api/states/sensor.poubelles_command",
+            headers={
+                "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        state = data.get("state", "")
+        if not state or state == "idle" or state == "unknown":
+            return
+
+        attrs = data.get("attributes", {})
+        action = attrs.get("action", "")
+        cmd_date = attrs.get("date", "")
+        bin_type = attrs.get("bin_type", "")
+        ts = attrs.get("timestamp", 0)
+
+        if not action or not cmd_date or not bin_type:
+            return
+
+        # Check we haven't already processed this command (by timestamp)
+        last_ts = getattr(poll_command_sensor, "_last_ts", 0)
+        if ts <= last_ts:
+            return
+        poll_command_sensor._last_ts = ts
+
+        # Execute the confirmation
+        logger.info(f"Card command: {action} {cmd_date} {bin_type}")
+        history = get_history()
+        calendar_data = get_calendar()
+        if cmd_date not in history:
+            history[cmd_date] = {}
+
+        # "all" means confirm all bins for that date (from notification actions)
+        if bin_type == "all":
+            bins_for_date = calendar_data.get(cmd_date, [])
+            for b in bins_for_date:
+                history[cmd_date][b] = action
+        else:
+            history[cmd_date][bin_type] = action
+        save_history(history)
+
+        # Cancel follow-ups if all confirmed
+        if _bins_confirmed_for(cmd_date):
+            settings = get_settings()
+            repeat_max = settings.get("reminder_repeat_max", 5)
+            for i in range(1, repeat_max + 1):
+                try:
+                    scheduler.remove_job(f"followup_{cmd_date}_{i}")
+                except Exception:
+                    pass
+            logger.info(f"All bins confirmed for {cmd_date} via card")
+
+        # Update sensors with new data
+        update_ha_sensors()
+
+        # Reset command sensor to idle
+        requests.post(
+            "http://supervisor/core/api/states/sensor.poubelles_command",
+            headers={
+                "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "state": "idle",
+                "attributes": {
+                    "friendly_name": "Poubelles Command",
+                    "icon": "mdi:delete-check",
+                },
+            },
+            timeout=5,
+        )
+    except Exception as e:
+        logger.debug(f"Command poll error: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1358,7 @@ if __name__ == "__main__":
 
     setup_scheduler()
     install_lovelace_card()
+    install_notification_automations()
     update_ha_sensors()
     port = int(os.environ.get("INGRESS_PORT", "8099"))
     logger.info(f"Starting Gestion Poubelles on port {port}")
