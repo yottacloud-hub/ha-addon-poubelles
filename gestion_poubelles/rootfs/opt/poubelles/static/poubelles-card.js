@@ -7,7 +7,7 @@
  *   entity: sensor.poubelles_prochaine_collecte
  *   max_items: 5
  */
-const POUBELLES_CARD_VERSION = "1.2.2";
+const POUBELLES_CARD_VERSION = "1.2.3";
 
 class PoubellesCard extends HTMLElement {
   constructor() {
@@ -42,8 +42,10 @@ class PoubellesCard extends HTMLElement {
   }
 
   /**
-   * Confirm a bin by writing to a command sensor that the addon polls.
-   * Uses hass.callApi which works for ALL authenticated users.
+   * Confirm a bin using multiple fallback methods:
+   * 1. Direct addon API via ingress (most reliable, works for all users)
+   * 2. hass.callService (rest_command) - works for all users
+   * 3. hass.callApi (direct state write) - requires admin
    */
   async _confirmBin(date, binType, status) {
     const actionKey = `${date}:${binType}`;
@@ -56,21 +58,68 @@ class PoubellesCard extends HTMLElement {
       status === "done" ? "Poubelle confirmee !" : "Marquee comme manquee"
     );
 
-    try {
-      const cmd = `${status}:${date}:${binType}:${Date.now()}`;
-      await this._hass.callApi("POST", "states/sensor.poubelles_command", {
-        state: cmd,
-        attributes: {
-          friendly_name: "Poubelles Command",
-          icon: "mdi:delete-check",
-          action: status,
+    let success = false;
+
+    // Method 1: Call addon API directly via ingress (works for ALL users)
+    if (!success) {
+      try {
+        const stateObj = this._hass.states[this._config.entity];
+        const ingressEntry = stateObj && stateObj.attributes.ingress_entry;
+        if (ingressEntry) {
+          const resp = await fetch(`${ingressEntry}/api/confirm`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ date, bin_type: binType, status }),
+          });
+          if (resp.ok) {
+            success = true;
+            console.log("Poubelles card: confirmed via addon ingress API");
+          }
+        }
+      } catch (e) {
+        console.warn("Poubelles card: ingress API failed", e);
+      }
+    }
+
+    // Method 2: Use rest_command service (works for all authenticated users)
+    if (!success) {
+      try {
+        await this._hass.callService("rest_command", "poubelles_set_command", {
+          status: status,
           date: date,
           bin_type: binType,
-          timestamp: Date.now(),
-        },
-      });
-    } catch (e) {
-      console.error("Poubelles card: confirm failed", e);
+        });
+        success = true;
+        console.log("Poubelles card: confirmed via rest_command service");
+      } catch (e) {
+        console.warn("Poubelles card: rest_command failed, trying callApi", e);
+      }
+    }
+
+    // Method 3: Direct state write via API (requires admin)
+    if (!success) {
+      try {
+        const cmd = `${status}:${date}:${binType}:${Date.now()}`;
+        await this._hass.callApi("POST", "states/sensor.poubelles_command", {
+          state: cmd,
+          attributes: {
+            friendly_name: "Poubelles Command",
+            icon: "mdi:delete-check",
+            action: status,
+            date: date,
+            bin_type: binType,
+            timestamp: Date.now(),
+          },
+        });
+        success = true;
+        console.log("Poubelles card: confirmed via callApi");
+      } catch (e) {
+        console.warn("Poubelles card: callApi also failed", e);
+      }
+    }
+
+    if (!success) {
       this._showToast("Erreur - reessayez");
     }
 
