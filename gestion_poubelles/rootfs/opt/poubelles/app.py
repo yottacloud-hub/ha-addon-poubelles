@@ -830,7 +830,7 @@ def install_lovelace_card():
                     "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
                     "Content-Type": "application/json",
                 }
-                card_version = "1.2.3"
+                card_version = "1.3.0"
                 card_url = f"/local/poubelles-card.js?v={card_version}"
                 try:
                     resp = requests.get(
@@ -974,11 +974,20 @@ automation:
                 config_file.write_text(config_content)
                 logger.info("Added packages include to configuration.yaml")
 
-        # 4. Reload automations and rest_commands
-        requests.post(
-            "http://supervisor/core/api/services/automation/reload",
-            headers=headers, timeout=10,
-        )
+        # 4. Reload core config (secrets.yaml), rest_commands, and automations
+        for svc in [
+            "homeassistant/reload_core_config",
+            "rest_command/reload",
+            "automation/reload",
+        ]:
+            try:
+                requests.post(
+                    f"http://supervisor/core/api/services/{svc}",
+                    headers=headers, timeout=10,
+                )
+                logger.info(f"Reloaded {svc}")
+            except Exception as e:
+                logger.warning(f"Failed to reload {svc}: {e}")
         logger.info("Notification automations installed and reloaded")
 
     except Exception as e:
@@ -1069,55 +1078,6 @@ def poll_command_sensor():
     except Exception as e:
         logger.debug(f"Command poll error: {e}")
 
-
-def poll_events():
-    """Poll HA event bus for poubelles_confirm events (fallback for non-admin users)."""
-    if not SUPERVISOR_TOKEN:
-        return
-    try:
-        resp = requests.get(
-            "http://supervisor/core/api/events/poubelles_confirm",
-            headers={
-                "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
-            },
-            timeout=5,
-        )
-        # The events endpoint returns fired events - but we use state changed instead
-        # Poll the HA states for a secondary command path via event-written state
-    except Exception:
-        pass
-
-    # Alternative: check if there's a state change on input_text or similar
-    # For now, the rest_command + poll_command_sensor handles the primary path
-
-
-def _process_confirm_action(action, cmd_date, bin_type):
-    """Shared logic for processing a confirm/miss action from any source."""
-    logger.info(f"Processing confirm: {action} {cmd_date} {bin_type}")
-    history = get_history()
-    calendar_data = get_calendar()
-    if cmd_date not in history:
-        history[cmd_date] = {}
-
-    if bin_type == "all":
-        bins_for_date = calendar_data.get(cmd_date, [])
-        for b in bins_for_date:
-            history[cmd_date][b] = action
-    else:
-        history[cmd_date][bin_type] = action
-    save_history(history)
-
-    if _bins_confirmed_for(cmd_date):
-        settings = get_settings()
-        repeat_max = settings.get("reminder_repeat_max", 5)
-        for i in range(1, repeat_max + 1):
-            try:
-                scheduler.remove_job(f"followup_{cmd_date}_{i}")
-            except Exception:
-                pass
-        logger.info(f"All bins confirmed for {cmd_date}")
-
-    update_ha_sensors()
 
 
 # ---------------------------------------------------------------------------
