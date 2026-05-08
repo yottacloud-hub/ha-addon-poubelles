@@ -7,7 +7,7 @@
  *   entity: sensor.poubelles_prochaine_collecte
  *   max_items: 5
  */
-const POUBELLES_CARD_VERSION = "1.2.3";
+const POUBELLES_CARD_VERSION = "1.3.0";
 
 class PoubellesCard extends HTMLElement {
   constructor() {
@@ -41,18 +41,11 @@ class PoubellesCard extends HTMLElement {
     return { entity: "sensor.poubelles_prochaine_collecte" };
   }
 
-  /**
-   * Confirm a bin using multiple fallback methods:
-   * 1. Direct addon API via ingress (most reliable, works for all users)
-   * 2. hass.callService (rest_command) - works for all users
-   * 3. hass.callApi (direct state write) - requires admin
-   */
   async _confirmBin(date, binType, status) {
     const actionKey = `${date}:${binType}`;
     if (this._pendingActions.has(actionKey)) return;
     this._pendingActions.add(actionKey);
 
-    // Optimistic UI immediately
     this._optimisticUpdate(date, binType, status);
     this._showToast(
       status === "done" ? "Poubelle confirmee !" : "Marquee comme manquee"
@@ -60,29 +53,26 @@ class PoubellesCard extends HTMLElement {
 
     let success = false;
 
-    // Method 1: Call addon API directly via ingress (works for ALL users)
+    // Method 1: Addon API via Supervisor WebSocket (creates ingress session automatically)
     if (!success) {
       try {
         const stateObj = this._hass.states[this._config.entity];
-        const ingressEntry = stateObj && stateObj.attributes.ingress_entry;
-        if (ingressEntry) {
-          const resp = await fetch(`${ingressEntry}/api/confirm`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "same-origin",
-            body: JSON.stringify({ date, bin_type: binType, status }),
-          });
-          if (resp.ok) {
-            success = true;
-            console.log("Poubelles card: confirmed via addon ingress API");
-          }
-        }
+        const slug = (stateObj && stateObj.attributes.addon_slug) || "local_gestion_poubelles";
+        await this._hass.callWS({
+          type: "supervisor/api",
+          endpoint: "/api/confirm",
+          method: "post",
+          data: { date, bin_type: binType, status },
+          addon: slug,
+        });
+        success = true;
+        console.log("Poubelles card: confirmed via supervisor WS");
       } catch (e) {
-        console.warn("Poubelles card: ingress API failed", e);
+        console.warn("Poubelles card: supervisor WS failed", e);
       }
     }
 
-    // Method 2: Use rest_command service (works for all authenticated users)
+    // Method 2: rest_command service (works for all authenticated users)
     if (!success) {
       try {
         await this._hass.callService("rest_command", "poubelles_set_command", {
@@ -91,13 +81,13 @@ class PoubellesCard extends HTMLElement {
           bin_type: binType,
         });
         success = true;
-        console.log("Poubelles card: confirmed via rest_command service");
+        console.log("Poubelles card: confirmed via rest_command");
       } catch (e) {
-        console.warn("Poubelles card: rest_command failed, trying callApi", e);
+        console.warn("Poubelles card: rest_command failed", e);
       }
     }
 
-    // Method 3: Direct state write via API (requires admin)
+    // Method 3: Direct state write (requires admin)
     if (!success) {
       try {
         const cmd = `${status}:${date}:${binType}:${Date.now()}`;
@@ -115,7 +105,29 @@ class PoubellesCard extends HTMLElement {
         success = true;
         console.log("Poubelles card: confirmed via callApi");
       } catch (e) {
-        console.warn("Poubelles card: callApi also failed", e);
+        console.warn("Poubelles card: callApi failed", e);
+      }
+    }
+
+    // Method 4: Ingress fetch with cookie auth
+    if (!success) {
+      try {
+        const stateObj = this._hass.states[this._config.entity];
+        const ingressEntry = stateObj && stateObj.attributes.ingress_entry;
+        if (ingressEntry) {
+          const resp = await fetch(`${ingressEntry}/api/confirm`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ date, bin_type: binType, status }),
+          });
+          if (resp.ok) {
+            success = true;
+            console.log("Poubelles card: confirmed via ingress fetch");
+          }
+        }
+      } catch (e) {
+        console.warn("Poubelles card: ingress fetch failed", e);
       }
     }
 
