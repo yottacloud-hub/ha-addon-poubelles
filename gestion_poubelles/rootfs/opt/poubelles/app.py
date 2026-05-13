@@ -1189,14 +1189,21 @@ def upload_calendar():
             "raw_text": raw_text,
         }), 422
 
-    # Merge with existing calendar
+    # Merge with existing calendar and reset history for re-imported dates
     existing = get_calendar()
+    history = get_history()
+    history_changed = False
     for d, bins in parsed.items():
         if d in existing:
             existing[d] = list(set(existing[d] + bins))
         else:
             existing[d] = bins
+        if d in history:
+            del history[d]
+            history_changed = True
     save_calendar(existing)
+    if history_changed:
+        save_history(history)
     update_ha_sensors()
 
     return jsonify({
@@ -1218,17 +1225,28 @@ def api_set_calendar():
     """Add or update dates manually."""
     data = request.get_json()
     calendar = get_calendar()
+    history = get_history()
+    history_changed = False
 
     if "dates" in data:
         # Batch update: {"dates": {"2025-03-15": ["jaune"], ...}}
         for d, bins in data["dates"].items():
-            if bins:  # Only add non-empty entries
+            if bins:
                 calendar[d] = bins
+                # Reset confirmation history when (re-)adding a date
+                if d in history:
+                    del history[d]
+                    history_changed = True
     elif "date" in data and "bins" in data:
-        # Single update
-        calendar[data["date"]] = data["bins"]
+        d = data["date"]
+        calendar[d] = data["bins"]
+        if d in history:
+            del history[d]
+            history_changed = True
 
     save_calendar(calendar)
+    if history_changed:
+        save_history(history)
     update_ha_sensors()
     return jsonify({"success": True, "total": len(calendar)})
 
@@ -1250,6 +1268,11 @@ def api_delete_date():
     if d and d in calendar:
         del calendar[d]
         save_calendar(calendar)
+        # Also clear confirmation history for this date
+        history = get_history()
+        if d in history:
+            del history[d]
+            save_history(history)
     update_ha_sensors()
     return jsonify({"success": True})
 
