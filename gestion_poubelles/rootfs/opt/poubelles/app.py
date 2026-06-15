@@ -281,7 +281,7 @@ def parse_calendar_by_color(filepath, year=None):
         if filepath.lower().endswith('.pdf'):
             if not HAS_PDF:
                 return {}
-            pages = convert_from_path(filepath, dpi=200)
+            pages = convert_from_path(filepath, dpi=300)
         else:
             pages = [Image.open(filepath)]
 
@@ -292,6 +292,12 @@ def parse_calendar_by_color(filepath, year=None):
         for page_idx, img in enumerate(pages):
             logger.info(f"Color parser: processing page {page_idx + 1}/{len(pages)}")
             page_result = _parse_calendar_page(img, year)
+            if not page_result:
+                # OCR may fail on colored backgrounds; retry with binarized image
+                # for text detection but keep original for color sampling
+                logger.info(f"Color parser: page {page_idx + 1} retry with binarized OCR")
+                bw = img.convert('L').point(lambda x: 255 if x > 160 else 0)
+                page_result = _parse_calendar_page(bw, year, color_img=img)
             all_results.update(page_result)
 
         logger.info(f"Color parser: total {len(all_results)} collection dates from {len(pages)} page(s)")
@@ -302,10 +308,15 @@ def parse_calendar_by_color(filepath, year=None):
         return {}
 
 
-def _parse_calendar_page(img, year):
-    """Parse a single page/image of a grid-style waste calendar."""
+def _parse_calendar_page(img, year, color_img=None):
+    """Parse a single page/image of a grid-style waste calendar.
+
+    img is used for OCR. color_img (if provided) is used for pixel color
+    sampling — needed when img is a binarized version for better OCR.
+    """
     try:
-        img_rgb = img.convert('RGB')
+        color_source = (color_img or img).convert('RGB')
+        img_rgb = color_source
         w, h = img_rgb.size
         logger.info(f"Color parser: image size {w}x{h}")
 
