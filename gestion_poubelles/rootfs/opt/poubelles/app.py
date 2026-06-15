@@ -271,21 +271,40 @@ def parse_calendar_by_color(filepath, year=None):
     - Rows represent days (1-31)
     - Gray background = ordures ménagères (verte)
     - Yellow/gold background = emballages recyclables (jaune)
+    Handles multi-page PDFs (e.g. page 1 = Jan-Jun, page 2 = Jul-Dec).
     """
     if not HAS_OCR:
         logger.warning("Color parser: OCR not available")
         return {}
 
     try:
-        # Load image
         if filepath.lower().endswith('.pdf'):
             if not HAS_PDF:
                 return {}
             pages = convert_from_path(filepath, dpi=200)
-            img = pages[0]
         else:
-            img = Image.open(filepath)
+            pages = [Image.open(filepath)]
 
+        if year is None:
+            year = datetime.now().year
+
+        all_results = {}
+        for page_idx, img in enumerate(pages):
+            logger.info(f"Color parser: processing page {page_idx + 1}/{len(pages)}")
+            page_result = _parse_calendar_page(img, year)
+            all_results.update(page_result)
+
+        logger.info(f"Color parser: total {len(all_results)} collection dates from {len(pages)} page(s)")
+        return all_results
+
+    except Exception as e:
+        logger.error(f"Color parser error: {e}", exc_info=True)
+        return {}
+
+
+def _parse_calendar_page(img, year):
+    """Parse a single page/image of a grid-style waste calendar."""
+    try:
         img_rgb = img.convert('RGB')
         w, h = img_rgb.size
         logger.info(f"Color parser: image size {w}x{h}")
@@ -295,18 +314,7 @@ def parse_calendar_by_color(filepath, year=None):
             img, lang='fra', output_type=pytesseract.Output.DICT
         )
         n = len(ocr['text'])
-
-        # --- Find year ---
-        if year is None:
-            year = datetime.now().year
-            for i in range(n):
-                t = ocr['text'][i].strip()
-                if len(t) == 4 and t.isdigit():
-                    v = int(t)
-                    if 2024 <= v <= 2040:
-                        year = v
-                        break
-        logger.info(f"Color parser: year={year}")
+        logger.info(f"Color parser page: year={year}, OCR tokens={n}")
 
         # --- Find month headers ---
         MONTH_LOOKUP = {
@@ -477,11 +485,11 @@ def parse_calendar_by_color(filepath, year=None):
                     except ValueError:
                         pass
 
-        logger.info(f"Color parser: found {len(result)} collection dates")
+        logger.info(f"Color parser page: found {len(result)} collection dates")
         return result
 
     except Exception as e:
-        logger.error(f"Color parser error: {e}", exc_info=True)
+        logger.error(f"Color parser page error: {e}", exc_info=True)
         return {}
 
 
