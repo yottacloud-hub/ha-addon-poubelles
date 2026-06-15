@@ -9,6 +9,7 @@ import sys
 import json
 import re
 import logging
+import statistics
 import calendar as cal_module
 from datetime import datetime, timedelta, date
 from pathlib import Path
@@ -278,46 +279,86 @@ def classify_cell_color(r, g, b):
 def parse_calendar_by_color(filepath, year=None):
     """Parse a grid-style waste calendar by detecting cell background colors.
 
-    Works with calendars where:
-    - Columns represent months
-    - Rows represent days (1-31)
-    - Gray background = ordures ménagères (verte)
-    - Yellow/gold background = emballages recyclables (jaune)
-    Handles multi-page PDFs (e.g. page 1 = Jan-Jun, page 2 = Jul-Dec).
+    Tries multiple DPI values and image preprocessing methods per page,
+    keeping the best result (most dates found). This handles varying PDF
+    rendering quality across pages and environments.
     """
     if not HAS_OCR:
         logger.warning("Color parser: OCR not available")
         return {}
 
     try:
-        if filepath.lower().endswith('.pdf'):
-            if not HAS_PDF:
-                return {}
-            pages = convert_from_path(filepath, dpi=300)
-        else:
-            pages = [Image.open(filepath)]
-
         if year is None:
             year = datetime.now().year
 
         all_results = {}
-        for page_idx, img in enumerate(pages):
-            logger.info(f"Color parser: processing page {page_idx + 1}/{len(pages)}")
-            page_result = _parse_calendar_page(img, year)
-            if not page_result:
-                # OCR may fail on colored backgrounds; retry with binarized image
-                # for text detection but keep original for color sampling
-                logger.info(f"Color parser: page {page_idx + 1} retry with binarized OCR")
-                bw = img.convert('L').point(lambda x: 255 if x > 160 else 0)
-                page_result = _parse_calendar_page(bw, year, color_img=img)
-            all_results.update(page_result)
 
-        logger.info(f"Color parser: total {len(all_results)} collection dates from {len(pages)} page(s)")
+        if filepath.lower().endswith('.pdf'):
+            if not HAS_PDF:
+                return {}
+            # Try multiple DPIs — different pages may need different resolutions
+            for dpi in [200, 300]:
+                pages = convert_from_path(filepath, dpi=dpi)
+                for page_idx, img in enumerate(pages):
+                    page_num = page_idx + 1
+                    best = _best_page_parse(img, year, page_num, dpi)
+                    # Keep the result with more dates for each page
+                    existing_for_page = {d: v for d, v in all_results.items()
+                                         if any(d.startswith(f"{year}-{m:02d}")
+                                                for m in _months_in_result(best))}
+                    if len(best) > len(existing_for_page):
+                        # Remove old results for these months and add new ones
+                        for d in list(all_results):
+                            m = int(d.split('-')[1])
+                            if m in _months_in_result(best):
+                                del all_results[d]
+                        all_results.update(best)
+                        logger.info(f"Color parser: page {page_num} @ {dpi}dpi -> {len(best)} dates (best so far)")
+        else:
+            img = Image.open(filepath)
+            all_results = _best_page_parse(img, year, 1, 0)
+
+        logger.info(f"Color parser: total {len(all_results)} collection dates")
         return all_results
 
     except Exception as e:
         logger.error(f"Color parser error: {e}", exc_info=True)
         return {}
+
+
+def _months_in_result(result):
+    """Return set of month numbers present in a result dict."""
+    return {int(d.split('-')[1]) for d in result}
+
+
+def _best_page_parse(img, year, page_num, dpi):
+    """Try multiple OCR strategies on a page and return the best result."""
+    attempts = []
+
+    # Attempt 1: original image
+    r = _parse_calendar_page(img, year)
+    if r:
+        attempts.append(r)
+
+    # Attempt 2: grayscale
+    gray = img.convert('L')
+    r = _parse_calendar_page(gray, year, color_img=img)
+    if r:
+        attempts.append(r)
+
+    # Attempt 3: binarized (threshold) for OCR, original for colors
+    bw = gray.point(lambda x: 255 if x > 160 else 0)
+    r = _parse_calendar_page(bw, year, color_img=img)
+    if r:
+        attempts.append(r)
+
+    if not attempts:
+        return {}
+
+    best = max(attempts, key=len)
+    logger.info(f"Color parser: page {page_num} @ {dpi}dpi best={len(best)} dates "
+                f"(tried {len(attempts)} methods: {[len(a) for a in attempts]})")
+    return best
 
 
 def _parse_calendar_page(img, year, color_img=None):
@@ -434,7 +475,7 @@ def _parse_calendar_page(img, year, color_img=None):
             logger.info("Color parser: not enough day positions")
             return {}
 
-        # Calculate average row height
+        # Calculate row height using median (robust to OCR outliers)
         heights = []
         for j in range(1, len(unique)):
             d1, y1 = unique[j - 1]
@@ -448,7 +489,12 @@ def _parse_calendar_page(img, year, color_img=None):
             logger.info("Color parser: could not compute row height")
             return {}
 
-        row_h = sum(heights) / len(heights)
+        row_h = statistics.median(heights)
+
+        # Sanity check: 31 rows + header must fit in image height
+        if row_h * 31 > h * 0.95:
+            logger.info(f"Color parser: row_height {row_h:.1f} too large for {h}px image, skipping")
+            return {}
 
         # Find day-1 Y position
         day1_y = None
