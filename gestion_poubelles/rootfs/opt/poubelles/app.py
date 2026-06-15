@@ -244,20 +244,32 @@ def classify_cell_color(r, g, b):
 
     Returns 'jaune' for yellow/gold (recyclables),
     'verte' for gray (ordures ménagères), or None.
+
+    Known colors in Toulouse Métropole calendars:
+    - (162, 171, 167) spread~9   = verte (ordures, dark gray)
+    - (234, 216, 151) spread~83  = jaune (recyclables, gold)
+    - (177, 218, 201) spread~41  = weekend/holiday tint (NOT collection)
+    - (237, 237, 237) spread~0   = no collection (light gray)
     """
+    max_c = max(r, g, b)
+    min_c = min(r, g, b)
+    spread = max_c - min_c
+
     # White or very light = no collection
-    # Use min channel to catch near-white cells (e.g. 235, 240, 238)
-    if min(r, g, b) > 205:
+    if min_c > 205:
+        return None
+
+    # Green-tinted cells (R~177, G~218, B~201) = weekends/holidays, not collection
+    # Characterized by: G is highest, distinct green tint, spread 25-50
+    if g > r and g > b and (g - r) > 20 and 160 < g < 230 and 25 < spread < 55:
         return None
 
     # Yellow/gold: R and G are high, B is distinctly lower
-    if r > 170 and g > 140 and b < 160 and (r - b) > 35:
+    if r > 165 and g > 135 and b < 175 and (r - b) > 25:
         return "jaune"
 
-    # Gray (neutral, possibly with slight warm/green tint)
-    max_c = max(r, g, b)
-    min_c = min(r, g, b)
-    if max_c - min_c < 55 and 110 < max_c < 205:
+    # Gray (neutral, low saturation = ordures ménagères)
+    if spread < 25 and 100 < max_c < 215:
         return "verte"
 
     return None
