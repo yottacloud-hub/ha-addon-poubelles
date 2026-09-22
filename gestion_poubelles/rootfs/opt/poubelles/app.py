@@ -612,6 +612,31 @@ def get_notify_services():
     return services
 
 
+_addon_slug_cache = None
+
+def get_addon_slug():
+    """Return the full addon slug from Supervisor (e.g. local_gestion_poubelles)."""
+    global _addon_slug_cache
+    if _addon_slug_cache:
+        return _addon_slug_cache
+    if not SUPERVISOR_TOKEN:
+        return "local_gestion_poubelles"
+    try:
+        resp = requests.get(
+            "http://supervisor/addons/self/info",
+            headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            slug = (resp.json().get("data") or {}).get("slug")
+            if slug:
+                _addon_slug_cache = slug
+                return slug
+    except Exception as e:
+        logger.warning(f"Failed to get addon slug: {e}")
+    return "local_gestion_poubelles"
+
+
 def send_notification(title: str, message: str, data: dict = None):
     """Send a notification to all configured devices via Home Assistant."""
     settings = get_settings()
@@ -671,14 +696,20 @@ def _build_reminder_message(bins, is_followup=False):
     prefix = "RAPPEL : " if is_followup else ""
     message = f"{prefix}Demain c'est jour de collecte !\n\n{bin_list}\n\nPensez à sortir vos poubelles ce soir."
 
-    # Add tap action to open the addon panel + actionable confirm/miss buttons
-    ingress = INGRESS_ENTRY or "/"
+    # Tap = open addon panel inside HA app (not Safari); actions confirm inline.
+    # iOS: with the "POUBELLES" push category configured in HA Companion,
+    # the two buttons show directly on the notification (like Apple Watch).
+    # Android: dynamic actions below are shown inline on the banner.
+    ha_url = f"/hassio/ingress/{get_addon_slug()}"
     tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
     bin_label = " + ".join("Jaune" if b == "jaune" else "Verte" for b in bins)
     notif_data = {
-        "url": ingress,           # iOS companion app
-        "clickAction": ingress,   # Android companion app
-        "tag": "poubelles_reminder",
+        "url": ha_url,
+        "clickAction": ha_url,
+        "tag": f"poubelles_{tomorrow}",
+        "push": {
+            "category": "POUBELLES",
+        },
         "actions": [
             {
                 "action": f"POUBELLES_DONE_{tomorrow}",
@@ -691,7 +722,7 @@ def _build_reminder_message(bins, is_followup=False):
             {
                 "action": "URI",
                 "title": "📋 Ouvrir",
-                "uri": ingress,
+                "uri": ha_url,
             },
         ],
     }
@@ -879,7 +910,7 @@ def update_ha_sensors():
                     "is_today": next_date == today_str if next_date else False,
                     "upcoming": upcoming,
                     "ingress_entry": INGRESS_ENTRY,
-                    "addon_slug": "local_gestion_poubelles",
+                    "addon_slug": get_addon_slug(),
                     "total_scheduled": len(calendar_data),
                 }
             },
@@ -1001,13 +1032,16 @@ automation:
       - condition: template
         value_template: >-
           {{{{ trigger.event.data.action is defined and
-          trigger.event.data.action.startswith("POUBELLES_DONE_") }}}}
+          (trigger.event.data.action == "POUBELLES_DONE" or
+          trigger.event.data.action.startswith("POUBELLES_DONE_")) }}}}
     action:
       - service: rest_command.poubelles_set_command
         data:
           status: "done"
           date: >-
-            {{{{ trigger.event.data.action.replace("POUBELLES_DONE_", "") }}}}
+            {{{{ trigger.event.data.action.replace("POUBELLES_DONE_", "")
+            if trigger.event.data.action != "POUBELLES_DONE"
+            else (trigger.event.data.tag | default("") | replace("poubelles_", "")) }}}}
           bin_type: "all"
     mode: queued
 
@@ -1021,13 +1055,16 @@ automation:
       - condition: template
         value_template: >-
           {{{{ trigger.event.data.action is defined and
-          trigger.event.data.action.startswith("POUBELLES_MISSED_") }}}}
+          (trigger.event.data.action == "POUBELLES_MISSED" or
+          trigger.event.data.action.startswith("POUBELLES_MISSED_")) }}}}
     action:
       - service: rest_command.poubelles_set_command
         data:
           status: "missed"
           date: >-
-            {{{{ trigger.event.data.action.replace("POUBELLES_MISSED_", "") }}}}
+            {{{{ trigger.event.data.action.replace("POUBELLES_MISSED_", "")
+            if trigger.event.data.action != "POUBELLES_MISSED"
+            else (trigger.event.data.tag | default("") | replace("poubelles_", "")) }}}}
           bin_type: "all"
     mode: queued
 """
