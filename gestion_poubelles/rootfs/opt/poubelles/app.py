@@ -696,16 +696,20 @@ def _build_reminder_message(bins, is_followup=False):
     prefix = "RAPPEL : " if is_followup else ""
     message = f"{prefix}Demain c'est jour de collecte !\n\n{bin_list}\n\nPensez à sortir vos poubelles ce soir."
 
-    # Tap = open addon panel inside HA app (not Safari); actions confirm inline.
+    # Tap opens the HA default dashboard (where the Poubelles card lives).
+    # We used to point at /hassio/ingress/<slug> but the iOS Companion app
+    # crashes loading an ingress iframe from a notification deep link, so
+    # /lovelace is the safe choice — and the dashboard shows status anyway.
     # iOS: with the "POUBELLES" push category configured in HA Companion,
     # the two buttons show directly on the notification (like Apple Watch).
     # Android: dynamic actions below are shown inline on the banner.
-    ha_url = f"/hassio/ingress/{get_addon_slug()}"
+    tap_url = "/lovelace"
+    addon_url = f"/hassio/ingress/{get_addon_slug()}"
     tomorrow = (datetime.now() + timedelta(days=1)).date().isoformat()
     bin_label = " + ".join("Jaune" if b == "jaune" else "Verte" for b in bins)
     notif_data = {
-        "url": ha_url,
-        "clickAction": ha_url,
+        "url": tap_url,
+        "clickAction": tap_url,
         "tag": f"poubelles_{tomorrow}",
         "push": {
             "category": "POUBELLES",
@@ -721,8 +725,8 @@ def _build_reminder_message(bins, is_followup=False):
             },
             {
                 "action": "URI",
-                "title": "📋 Ouvrir",
-                "uri": ha_url,
+                "title": "📋 Ouvrir l'addon",
+                "uri": addon_url,
             },
         ],
     }
